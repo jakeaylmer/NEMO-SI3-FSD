@@ -102,7 +102,7 @@ MODULE par_ice
    LOGICAL , PUBLIC ::   ln_pnd_alb       !: melt ponds affect albedo
    REAL(wp), PUBLIC ::   rn_pnd_hl_min    !: pond lid thickness below which full pond area used in albedo calculation
    REAL(wp), PUBLIC ::   rn_pnd_hl_max    !: pond lid thickness above which ponds disappear from albedo calculation
-   !
+   ! 
    !                                     !!** ice-diagnostics namelist (namdia) **
    LOGICAL , PUBLIC ::   ln_icediachk     !: flag for ice diag (T) or not (F)
    REAL(wp), PUBLIC ::   rn_icechk_cel    !: rate of ice spuriously gained/lost (at any gridcell)
@@ -111,6 +111,9 @@ MODULE par_ice
    INTEGER , PUBLIC ::   iiceprt          !: debug i-point
    INTEGER , PUBLIC ::   jiceprt          !: debug j-point
    REAL(wp), PUBLIC ::   rdiag_v, rdiag_s, rdiag_t, rdiag_fv, rdiag_fs, rdiag_ft !: conservation diagnostics
+   
+   !                                     !!** ice-floe size distribution namelist (namfsd)
+   LOGICAL , PUBLIC ::   ln_fsd           !: Use FSD (T) or not (F)
 
    !!----------------------------------------------------------------------
    !!                   shared other parameters

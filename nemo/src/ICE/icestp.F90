@@ -64,6 +64,7 @@ MODULE icestp
    USE iceitd         ! sea-ice: remapping thickness distribution
    USE icealb         ! sea-ice: albedo
    USE icefrm         ! sea-ice: form drag param
+   USE icefsd         ! sea-ice: floe size distribution
    !
    USE bdy_oce , ONLY : ln_bdy   ! flag for bdy
    USE bdyice         ! unstructured open boundary data for sea-ice
@@ -278,6 +279,8 @@ CONTAINS
       CALL diag_set0                   ! set diag of mass, heat and salt fluxes to 0: needed for Agrif child grids
       !
       CALL ice_itd_init                ! ice thickness distribution initialization
+      !
+      CALL ice_fsd_init                ! set ice floe-size distribution parameters
       !
       CALL ice_thd_init                ! set ice thermodynics parameters (clem: important to call it first for melt ponds)
       !

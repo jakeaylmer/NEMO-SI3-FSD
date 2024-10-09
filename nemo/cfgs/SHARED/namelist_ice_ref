@@ -16,6 +16,7 @@
 !!             14 - Ice initialization                 (namini)
 !!             15 - Ice/snow albedos                   (namalb)
 !!             16 - Ice diagnostics                    (namdia)
+!!             17 - Ice floe size distribution         (namfsd)
 !!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 !
 !------------------------------------------------------------------------------
@@ -321,4 +322,9 @@
    ln_icectl        = .false.         !  ice points output for debug (T or F)
       iiceprt       =  10             !     i-index for debug
       jiceprt       =  10             !     j-index for debug
+/
+!------------------------------------------------------------------------------
+&namfsd         ! floe size distribution
+!------------------------------------------------------------------------------
+   ln_fsd           = .false.         ! use FSD (T) or not (F)
 /
