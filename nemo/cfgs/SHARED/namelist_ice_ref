@@ -327,4 +327,6 @@
 &namfsd         ! floe size distribution
 !------------------------------------------------------------------------------
    ln_fsd           = .false.         ! use FSD (T) or not (F)
+     !
+     nn_nfsd          = 12              ! number of floe size distribution categories
 /

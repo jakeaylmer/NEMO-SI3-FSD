@@ -114,6 +114,7 @@ MODULE par_ice
    
    !                                     !!** ice-floe size distribution namelist (namfsd)
    LOGICAL , PUBLIC ::   ln_fsd           !: Use FSD (T) or not (F)
+   INTEGER , PUBLIC ::   nn_nfsd          !: Number of floe-size categories
 
    !!----------------------------------------------------------------------
    !!                   shared other parameters
