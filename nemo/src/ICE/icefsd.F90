@@ -39,7 +39,7 @@ MODULE icefsd
 
 CONTAINS
    
-   SUBROUTINE fsd_init_bounds(nn_nfsd, floe_rad_l, floe_rad_c, floe_binwidth)
+   SUBROUTINE fsd_initbounds
       !!-------------------------------------------------------------------
       !!                 ***  ROUTINE fsd_init_bounds  ***
       !!
@@ -50,17 +50,8 @@ CONTAINS
       !!                coded for specific values of nn_nfsd = 24, 16, 12, or
       !!                1, since this is how it is done in CICE/Icepack. But
       !!                this could be changed in the future.
-      !! 
-      !! ** Input   :   Integer nn_nfsd (namelist parameter)
       !!-------------------------------------------------------------------
-      INTEGER , INTENT (IN) ::   nn_nfsd    ! number of floe size categories
       !
-      REAL(wp), DIMENSION(:), ALLOCATABLE, INTENT (INOUT) ::   &
-         floe_rad_l,    &  ! FSD size (radius) lower bound in m
-         floe_rad_c,    &  ! FSD size (radius) centre of category bounds, in m
-         floe_binwidth     ! FSD bin widths in m
-      !
-      ! Local variables:
       REAL(wp), DIMENSION(:), ALLOCATABLE ::   &
          lims   ! floe size category limits: smallest category lower limit to
          !      ! largest category upper limit (i.e., will be size nn_nfsd+1)
@@ -138,7 +129,7 @@ CONTAINS
       
       IF (ALLOCATED(lims)) DEALLOCATE(lims)   ! we do not need lims any more
       
-   END SUBROUTINE fsd_init_bounds
+   END SUBROUTINE fsd_initbounds
    
    
    SUBROUTINE ice_fsd_init
@@ -174,9 +165,8 @@ CONTAINS
       ENDIF
       !
       IF(ln_fsd) THEN
-         CALL fsd_init_bounds(nn_nfsd=nn_nfsd, floe_rad_l=floe_rad_l, &
-            &                 floe_rad_c=floe_rad_c, floe_binwidth=floe_binwidth)
-      ! 
+         CALL fsd_initbounds
+      !  
       !  ! Writing the FSD bounds in CICE/Icepack is done within its analogue
       !  ! of the fsd_init_bounds subroutine. I think it makes more sense here,
       !  ! continuing from the above printing.
