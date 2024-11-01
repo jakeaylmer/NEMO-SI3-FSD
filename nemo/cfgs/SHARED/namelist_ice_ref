@@ -329,4 +329,5 @@
    ln_fsd           = .false.         ! use FSD (T) or not (F)
      !
      nn_nfsd          = 12              ! number of floe size distribution categories
+     rn_floeshape     = 0.66            ! floe shape parameter (dimensionless)
 /

@@ -23,10 +23,11 @@ MODULE icefsd
    
    PUBLIC ::   ice_fsd_init   ! routine called by icestp.F90
    
-   REAL(wp), DIMENSION(:), ALLOCATABLE ::   &
-      floe_rad_u        ! FSD categories upper bounds (floe radii in m)
+   REAL(wp), ALLOCATABLE, DIMENSION(:) ::   &
+      floe_rad_u,    &  ! FSD categories upper bounds (floe radii in m)
+      floe_area_c       ! FSD category floe area at centre of bounds (m2)
    
-   REAL(wp), DIMENSION(:), ALLOCATABLE, PUBLIC ::   &
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   &
       ! Icepack declares these in a high-level driver module, not FSD module,
       ! and already sets the dimension to the number of FSD categories:
       ! 
@@ -52,7 +53,7 @@ CONTAINS
       !!                this could be changed in the future.
       !!-------------------------------------------------------------------
       !
-      REAL(wp), DIMENSION(:), ALLOCATABLE ::   &
+      REAL(wp), ALLOCATABLE, DIMENSION(:) ::   &
          lims   ! floe size category limits: smallest category lower limit to
          !      ! largest category upper limit (i.e., will be size nn_nfsd+1)
       
@@ -115,6 +116,7 @@ CONTAINS
          &     floe_rad_u(nn_nfsd),    &
          &     floe_rad_c(nn_nfsd),    &
          &     floe_binwidth(nn_nfsd), &
+         &     floe_area_c(nn_nfsd),   &
          &     STAT=ierr)
       
       IF (ierr /= 0) THEN
@@ -126,6 +128,8 @@ CONTAINS
       floe_rad_c = 0.5_wp * (floe_rad_u + floe_rad_l)
       
       floe_binwidth = floe_rad_u - floe_rad_l
+      
+      floe_area_c = 4.0_wp * rn_floeshape * floe_rad_c ** 2
       
       IF (ALLOCATED(lims)) DEALLOCATE(lims)   ! we do not need lims any more
       
@@ -148,7 +152,7 @@ CONTAINS
       INTEGER ::   j_fsd_cat     ! Local loop index
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
-      NAMELIST/namfsd/ ln_fsd, nn_nfsd
+      NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namfsd)
@@ -162,6 +166,7 @@ CONTAINS
          WRITE(numout,*) '   Namelist namfsd:'
          WRITE(numout,*) '      Floe size distribution activated or not    ln_fsd = ', ln_fsd
          WRITE(numout,*) '         Number of floe size categories         nn_nfsd = ', nn_nfsd
+         WRITE(numout,*) '         Floe shape parameter              rn_floeshape = ', rn_floeshape
       ENDIF
       !
       IF(ln_fsd) THEN
