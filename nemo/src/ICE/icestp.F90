@@ -280,8 +280,6 @@ CONTAINS
       !
       CALL ice_itd_init                ! ice thickness distribution initialization
       !
-      CALL ice_fsd_init                ! set ice floe-size distribution parameters
-      !
       CALL ice_thd_init                ! set ice thermodynics parameters (clem: important to call it first for melt ponds)
       !
       CALL ice_sbc_init                ! set ice-ocean and ice-atm. coupling parameters
@@ -300,6 +298,8 @@ CONTAINS
       CALL ice_update_init             ! ice surface boundary condition
       !
       CALL ice_alb_init                ! ice surface albedo
+      !
+      CALL ice_fsd_init                ! set ice floe-size distribution parameters
       !
       CALL ice_dia_init                ! initialization for diags
       !

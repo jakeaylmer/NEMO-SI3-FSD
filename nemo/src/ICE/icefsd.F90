@@ -34,6 +34,10 @@ MODULE icefsd
       floe_rad_l,    &  ! FSD categories lower bounds (floe radii in m)
       floe_rad_c,    &  ! FSD size of floes in centre of categories (radii in m)
       floe_binwidth     ! FSD category bin widths (floe radii in m)
+   
+   REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   &
+      a_ifsd            ! FSD per ice thickness category (called modified-areal
+      !                 ! FSD in Roach et al., 2018, JGR: Oceans)
 
    !! * Substitutions
 #  include "read_nml_substitute.h90"
@@ -136,6 +140,105 @@ CONTAINS
    END SUBROUTINE fsd_initbounds
    
    
+   SUBROUTINE fsd_alloc
+      !!-------------------------------------------------------------------
+      !!                 *** ROUTINE fsd_alloc ***
+      !!-------------------------------------------------------------------
+      !!
+      !! ** Purpose :   Allocate floe size distribution variables
+      !!
+      !!-------------------------------------------------------------------
+      !
+      INTEGER ::   ierr   ! ALLOCATE status return value
+      !
+      !!-------------------------------------------------------------------
+      
+      ALLOCATE(a_ifsd(jpi, jpj, nn_nfsd, jpl), STAT=ierr)
+      
+      IF (ierr /= 0) THEN
+         CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd)')
+      ENDIF        
+      
+   END SUBROUTINE fsd_alloc
+   
+   
+   SUBROUTINE fsd_init
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE fsd_init  ***
+      !!
+      !! ** Purpose :   Allocate and initialise floe size distribution
+      !!                variables.
+      !!
+      !! ** Method  :   Allocate arrays based in FSD category bounds.
+      !! 
+      !! ** Input   :   ??
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), PARAMETER ::   &
+         alpha = 2.1_wp   ! parameter from Perovich and Jones (2014) 
+      
+      REAL(wp) ::   &
+         totfrac          ! for normalising
+
+      INTEGER ::   &
+         j_itd_cat,   &   ! dummy variable for loop over ITD categories
+         j_fsd_cat,   &   ! dummy variable for loop over FSD categories
+         ierr             ! ALLOCATE status return value
+      !
+      !!-------------------------------------------------------------------
+      
+      ! This logical probably needs to have an "and no FSD info saved"
+      ! (e.g., if restarting?)...
+      IF (ln_iceini) THEN
+      
+         ! Following CICE/Icepack, initialise with a power law distribution
+         ! using parameters given by Perovich and Jones (2014, JGR: Oceans,
+         ! 119(12), 8767-8777, doi:10.1002/2014JC010136)
+         ! 
+         ! Fraction of sea ice in each floe size and thickness category is
+         ! the same for all grid cells (even where there is no sea ice)
+         ! initially
+         
+         totfrac = 0.0_wp
+         
+         ! Initial FSD is the same for each ice thickness category; calculate
+         ! for first category:        
+         DO j_fsd_cat = 1, nn_nfsd
+            ! 
+            !   ! Calculate power law FSD number distribution based on Perovich
+            !   ! and Jones (2014) and convert to area fraction distribution:
+            ! 
+            a_ifsd(:,:,j_fsd_cat,1) = (2.0_wp * floe_rad_c(j_fsd_cat))   &
+               &                         ** (-alpha - 1.0_wp)            &
+               &                      * floe_area_c(j_fsd_cat)           &
+               &                      * floe_binwidth(j_fsd_cat)
+            
+            totfrac = totfrac + a_ifsd(1,1,j_fsd_cat,1)
+         ENDDO
+         
+         a_ifsd(:,:,:,1) = a_ifsd(:,:,:,1) / totfrac   ! normalise
+         
+         ! Assign same initial FSD to remaining thickness categories:
+         DO j_itd_cat = 2, jpl
+            a_ifsd(:,:,:,j_itd_cat) = a_ifsd(:,:,:,1)
+         ENDDO
+         
+         IF(lwp) WRITE(numout,*) 'Initialised a_ifsd (to power law distribution)'
+      
+      ELSE
+         
+         !  Initialise FSD to zero for all categories, which allows the FSD to
+         !  emerge from physical processes
+            
+         a_ifsd(:,:,:,:) = 0.0_wp
+         
+         IF(lwp) WRITE(numout,*) 'Initialised a_ifsd (0 everywhere and for all categories)'
+         
+      ENDIF
+      
+   END SUBROUTINE fsd_init
+   
+   
    SUBROUTINE ice_fsd_init
       !!-------------------------------------------------------------------
       !!                  ***  ROUTINE ice_fsd_init   ***
@@ -182,7 +285,10 @@ CONTAINS
                   &            j_fsd_cat, ' < ', floe_rad_u(j_fsd_cat)
             ENDDO
          ENDIF
-      
+         
+         CALL fsd_alloc  ! could come before fsd_initbounds
+         CALL fsd_init   ! must come after fsd_alloc
+         
       ENDIF
       
    END SUBROUTINE ice_fsd_init
