@@ -14,14 +14,18 @@ MODULE icefsd
    !!   ice_fsd_init : namelist read
    !!----------------------------------------------------------------------
    USE par_ice         ! SI3 parameters
+   USE ice             ! sea-ice: variables
    
    USE in_out_manager  ! I/O manager (needed for lwm and lwp logicals)
+   USE iom             ! I/O manager library (needed for iom_put)
    USE lib_mpp         ! MPP library (needed for read_nml_substitute.h90)
    
    IMPLICIT NONE
    PRIVATE
    
-   PUBLIC ::   ice_fsd_init   ! routine called by icestp.F90
+   PUBLIC ::   &
+      ice_fsd_init, &   ! routine called by icestp.F90
+      ice_fsd_wri       ! routine called by icestp.F90  
    
    REAL(wp), ALLOCATABLE, DIMENSION(:) ::   &
       floe_rad_u,    &  ! FSD categories upper bounds (floe radii in m)
@@ -40,9 +44,154 @@ MODULE icefsd
       !                 ! FSD in Roach et al., 2018, JGR: Oceans)
 
    !! * Substitutions
+#  include "do_loop_substitute.h90"
 #  include "read_nml_substitute.h90"
 
 CONTAINS
+   
+   FUNCTION fsd_leff_cat()
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE fsd_leff_cat  ***
+      !!
+      !! ** Purpose :   Calculates the effective floe size (diameter) per ice
+      !!                thickness category.
+      !!
+      !! ** Method  :   Effective floe size (diameter) per ITD category is:
+      !! 
+      !!                   2 / integral[ (1/r) * L(r,h) * dr ]
+      !!
+      !!                where r is floe size (radius), L(r,h) is the modified-
+      !!                areal FSTD, i.e., L(r,h)*dr = a_ifsd, and integral is
+      !!                over all floe sizes (Bateson et al., 2022, Cryosphere,
+      !!                doi:10.5194/tc-16-2565-2022)
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(A2D(0),jpl) ::   &
+         fsd_leff_cat     ! effective floe size of each thickness category
+      !
+      INTEGER ::   &
+         ji, jj, jl, jf   ! dummy variables for loop indices
+      !
+      !!-------------------------------------------------------------------
+      
+      fsd_leff_cat(:,:,:) = 0.0_wp   ! initial value
+      
+      DO jl = 1, jpl
+         DO_2D( 0, 0, 0, 0 )
+            
+            ! Integral over floe categories [use radius at category centres
+            ! and note that a_ifsd corresponds to L(r,h)*dr]:
+            DO jf = 1, nn_nfsd
+               fsd_leff_cat(ji,jj,jl) = fsd_leff_cat(ji,jj,jl)   &
+                  &                     + a_ifsd(ji,jj,jf,jl) / floe_rad_c(jf)
+            ENDDO
+            
+            ! 2.0 divided by above integral, except where integral is zero
+            ! (or effectively zero):
+            IF (fsd_leff_cat(ji,jj,jl) >= epsi06) THEN
+               fsd_leff_cat(ji,jj,jl) = 2.0_wp / fsd_leff_cat(ji,jj,jl)
+            ELSE
+               fsd_leff_cat(ji,jj,jl) = 0.0_wp
+            ENDIF
+         
+         END_2D
+      ENDDO
+   
+   END FUNCTION fsd_leff_cat
+   
+   
+   FUNCTION fsd_leff(leff_per_cat)
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE fsd_leff  ***
+      !!
+      !! ** Purpose :   Calculates the effective floe size (diameter) per
+      !!                grid cell
+      !!
+      !! ** Method  :   Area-weighted average of effective floe size per
+      !!                ice thickness category (calculated by the function
+      !!                fsd_leff_cat(), the result of which should be input
+      !!                to the present function). See Bateson et al. (2022,
+      !!                Cryosphere, doi:10.5194/tc-16-2565-2022).
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(A2D(0),jpl), INTENT(in) ::   &
+         leff_per_cat   ! effective floe size per ITD category
+                        ! (calculated by function fsd_leff_cat)
+      
+      REAL(wp), DIMENSION(A2D(0)) ::   &
+         fsd_leff       ! effective floe size (diameter, m)
+      !
+      INTEGER ::   &
+         ji, jj, jl     ! dummy variables for loop indices
+      !
+      !!-------------------------------------------------------------------
+      
+      fsd_leff(:,:) = 0.0_wp   ! initial value
+      
+      DO_2D( 0, 0, 0, 0 )
+         ! Only calculate if ice is present (at_i > 0), otherwise leave as 0:
+         IF (at_i(ji,jj) >= epsi06) THEN
+            DO jl = 1, jpl
+               fsd_leff(ji,jj) = fsd_leff(ji,jj) + leff_per_cat(ji,jj,jl)   &
+                  &                            * a_i(ji,jj,jl) / at_i(ji,jj)
+            ENDDO
+         ENDIF
+      END_2D
+   
+   END FUNCTION fsd_leff
+   
+   
+   SUBROUTINE ice_fsd_wri( kt )
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE ice_fsd_wri  ***
+      !!
+      !! ** Purpose :   Writes output fields related to the FSD.
+      !!
+      !! ** Method  :   Calculates metrics if requested for output and
+      !!                writes using iom routines.
+      !!
+      !!-------------------------------------------------------------------
+      !
+      INTEGER, INTENT(in) ::   kt   ! time-step (this is not actually used,
+      !                             ! nor is it in the analogous subroutine
+      !                             ! ice_wri of icewri.F90 module...?)
+      !
+      REAL(wp), DIMENSION(A2D(0)) ::   &
+         leff_t,   &   ! effective floe size
+         zmsk00        ! 0% concentration mask
+      
+      REAL(wp), DIMENSION(A2D(0),jpl) ::   &
+         leff,     &   ! effective floe size for each ITD category
+         zmsk00c       ! 0% concentration mask for each ITD category
+      !
+      !!-------------------------------------------------------------------
+      
+      ! Copied from ice_wri generic subroutine; thresholds for outputs:
+      zmsk00 (:,:)   = MERGE( 1._wp, 0._wp, at_i(A2D(0))  >= epsi06  )
+      zmsk00c(:,:,:) = MERGE( 1._wp, 0._wp, a_i(A2D(0),:) >= epsi06  )
+      
+      ! Effective floe size (per ITD category and/or for grid cell)
+      ! 
+      ! (even if only for grid cell is required, it is still necessary to
+      ! first calculate it per ice thickness category)
+      ! 
+      IF (iom_use( 'icefsdleff' ) .or. iom_use( 'icefsdleff_cat' )) THEN
+         
+         leff = fsd_leff_cat()
+         
+         IF (iom_use( 'icefsdleff_cat' )) THEN
+             CALL iom_put( 'icefsdleff_cat' , leff(A2D(0),:) * zmsk00c)
+         ENDIF
+      
+         IF (iom_use( 'icefsdleff' )) THEN
+            leff_t = fsd_leff(leff)
+            CALL iom_put( 'icefsdleff' , leff_t(A2D(0)) * zmsk00 )
+         ENDIF
+      
+      ENDIF
+      
+   END SUBROUTINE ice_fsd_wri
+   
    
    SUBROUTINE fsd_initbounds
       !!-------------------------------------------------------------------
@@ -170,8 +319,7 @@ CONTAINS
       !!                variables.
       !!
       !! ** Method  :   Allocate arrays based in FSD category bounds.
-      !! 
-      !! ** Input   :   ??
+      !!
       !!-------------------------------------------------------------------
       !
       REAL(wp), PARAMETER ::   &

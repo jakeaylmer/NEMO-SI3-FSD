@@ -55,7 +55,10 @@
       <field id="dvpn_lid"     long_name="pond volume tendency due to exchanges with lid"          standard_name="sea_ice_pondvolume_tendency_lids"          unit="kg/m2/s" />
       <field id="dvpn_rnf"     long_name="pond volume tendency due to runoff"                      standard_name="sea_ice_pondvolume_tendency_runoff"        unit="kg/m2/s" />
       <field id="dvpn_drn"     long_name="pond volume tendency due to drainage"                    standard_name="sea_ice_pondvolume_tendency_drainage"      unit="kg/m2/s" />
-
+      
+      <!-- FSD -->
+      <field id="icefsdleff"     long_name="effective floe size"                                                                                             unit="m" />
+      
       <!-- heat -->
       <field id="icetemp"      long_name="Mean ice temperature"                                                                                              unit="degC" detect_missing_value="true" />
       <field id="snwtemp"      long_name="Mean snow temperature"                                                                                             unit="degC" detect_missing_value="true" />
@@ -342,7 +345,10 @@ standard_name="rft_loss"                                 unit="1/s"  />
       <field id="iceage_cat"   long_name="Ice age per category"                              unit="days"    detect_missing_value="true" />
       <field id="icebrv_cat"   long_name="Brine volume per category"                         unit="%"       detect_missing_value="true" />
       <field id="icealb_cat"   long_name="Sea-ice or snow albedo"                            unit=""        detect_missing_value="true" />
-
+      
+      <!-- FSD -->
+      <field id="icefsdleff_cat" long_name="effective floe size (per category)"              unit="m" />
+      
       <!-- Add-ons for SIMIP -->
       <field id="iceconc_cat_cmip"     long_name="Sea-ice area fractions in thickness categories"  standard_name="sea_ice_area_fraction_over_categories" detect_missing_value="true" unit=""   > iceconc_cat      * icemask_cat + $missval * (1.-icemask_cat) </field>
       <field id="icethic_cat_cmip"     long_name="Sea-ice thickness in thickness categories"       standard_name="sea_ice_thickness_over_categories"     detect_missing_value="true" unit="m"  > icethic_cat      * icemask_cat + $missval * (1.-icemask_cat) </field>
