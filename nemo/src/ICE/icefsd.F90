@@ -315,10 +315,11 @@ CONTAINS
       !!-------------------------------------------------------------------
       !!                 ***  ROUTINE fsd_init  ***
       !!
-      !! ** Purpose :   Allocate and initialise floe size distribution
-      !!                variables.
+      !! ** Purpose :   Set initial values of floe size distribution variable
+      !!                a_ifsd.
       !!
-      !! ** Method  :   Allocate arrays based in FSD category bounds.
+      !! ** Method  :   Either initialise to zero or to a power-law
+      !!                distribution depending on ln_iceini.
       !!
       !!-------------------------------------------------------------------
       !
@@ -329,9 +330,7 @@ CONTAINS
          totfrac          ! for normalising
 
       INTEGER ::   &
-         j_itd_cat,   &   ! dummy variable for loop over ITD categories
-         j_fsd_cat,   &   ! dummy variable for loop over FSD categories
-         ierr             ! ALLOCATE status return value
+         jf, jl           ! dummy variables for loop indices
       !
       !!-------------------------------------------------------------------
       
@@ -351,24 +350,22 @@ CONTAINS
          
          ! Initial FSD is the same for each ice thickness category; calculate
          ! for first category:        
-         DO j_fsd_cat = 1, nn_nfsd
+         DO jf = 1, nn_nfsd
             ! 
             !   ! Calculate power law FSD number distribution based on Perovich
             !   ! and Jones (2014) and convert to area fraction distribution:
             ! 
-            a_ifsd(:,:,j_fsd_cat,1) = (2.0_wp * floe_rad_c(j_fsd_cat))   &
-               &                         ** (-alpha - 1.0_wp)            &
-               &                      * floe_area_c(j_fsd_cat)           &
-               &                      * floe_binwidth(j_fsd_cat)
+            a_ifsd(:,:,jf,1) = (2.0_wp * floe_rad_c(jf)) ** (-alpha - 1.0_wp)   &
+               &               * floe_area_c(jf) * floe_binwidth(jf)
             
-            totfrac = totfrac + a_ifsd(1,1,j_fsd_cat,1)
+            totfrac = totfrac + a_ifsd(1,1,jf,1)
          ENDDO
          
          a_ifsd(:,:,:,1) = a_ifsd(:,:,:,1) / totfrac   ! normalise
          
          ! Assign same initial FSD to remaining thickness categories:
-         DO j_itd_cat = 2, jpl
-            a_ifsd(:,:,:,j_itd_cat) = a_ifsd(:,:,:,1)
+         DO jl = 2, jpl
+            a_ifsd(:,:,:,jl) = a_ifsd(:,:,:,1)
          ENDDO
          
          IF(lwp) WRITE(numout,*) 'Initialised a_ifsd (to power law distribution)'
@@ -393,14 +390,14 @@ CONTAINS
       !! 
       !! ** Purpose :   Check whether FSD is to be activated, and if so carry
       !!                out initialisation of FSD, printing parameter values
-      !!                to stdout.
+      !!                to STDOUT, and call other FSD initialisation routines
       !! 
       !! ** Method  :   Read the namfsd namelist, call other initialisation
       !!                subroutines in the module if FSD is activated.
       !! 
       !! ** input   :   Namelist namfsd
       !!-------------------------------------------------------------------
-      INTEGER ::   j_fsd_cat     ! Local loop index
+      INTEGER ::   jf            ! Local loop index for FSD categories
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
       NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape
@@ -422,15 +419,15 @@ CONTAINS
       !
       IF(ln_fsd) THEN
          CALL fsd_initbounds
-      !  
-      !  ! Writing the FSD bounds in CICE/Icepack is done within its analogue
-      !  ! of the fsd_init_bounds subroutine. I think it makes more sense here,
-      !  ! continuing from the above printing.
-      !  
+         
+         ! Writing the FSD bounds in CICE/Icepack is done within its analogue
+         ! of the fsd_init_bounds subroutine. I think it makes more sense here,
+         ! continuing from the above printing.
+         
          IF(lwp) THEN   ! continue control print
-            DO j_fsd_cat = 1, nn_nfsd
-               WRITE(numout,*) floe_rad_l(j_fsd_cat), ' < fsd Cat ', &
-                  &            j_fsd_cat, ' < ', floe_rad_u(j_fsd_cat)
+            DO jf = 1, nn_nfsd
+               WRITE(numout,*) floe_rad_l(jf), ' < fsd Cat ', jf,   &
+                  &                            ' < ', floe_rad_u(jf)
             ENDDO
          ENDIF
          
