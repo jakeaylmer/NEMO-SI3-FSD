@@ -19,6 +19,7 @@ MODULE icedyn_adv
    USE icedyn_adv_pra ! sea-ice: advection scheme (Prather)
    USE icedyn_adv_umx ! sea-ice: advection scheme (ultimate-macho)
    USE icectl         ! sea-ice: control prints
+   USE icefsd  , ONLY : a_ifsd   ! sea-ice: floe size distribution
    !
    USE in_out_manager ! I/O manager
    USE iom            ! I/O manager library
@@ -88,7 +89,8 @@ CONTAINS
       CASE( np_advPRA )                ! PRATHER scheme        !
          !                             !-----------------------!
          CALL ice_dyn_adv_pra(         kt, u_ice, v_ice, h_i, h_s, h_ip, &
-            &                          ato_i, v_i, v_s, sv_i, oa_i, a_i, a_ip, v_ip, v_il, e_s, e_i, szv_i )
+            &                          ato_i, v_i, v_s, sv_i, oa_i, a_i, a_ip, v_ip, v_il, e_s, e_i, szv_i, &
+            &                          a_ifsd )
       END SELECT
 
       !------------

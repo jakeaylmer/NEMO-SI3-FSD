@@ -295,13 +295,16 @@ CONTAINS
       CALL ice_var_glo2eqv(1)
       CALL ice_var_agg(1)
       !
+      CALL ice_fsd_init                ! set ice floe-size distribution parameters (this must come
+      !                                ! *after* ice_istate_init since FSD needs to know initial conditions options,
+      !                                ! but *before* ice_dyn_init, because advection initialisation routines need to
+      !                                ! know number of FSD categories)
+      !
       CALL ice_dyn_init                ! set ice dynamics parameters
       !
       CALL ice_update_init             ! ice surface boundary condition
       !
       CALL ice_alb_init                ! ice surface albedo
-      !
-      CALL ice_fsd_init                ! set ice floe-size distribution parameters
       !
       CALL ice_dia_init                ! initialization for diags
       !

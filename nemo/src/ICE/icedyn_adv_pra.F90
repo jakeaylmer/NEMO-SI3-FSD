@@ -20,6 +20,7 @@ MODULE icedyn_adv_pra
    USE ice            ! sea-ice variables
    USE sbc_oce , ONLY : nn_fsbc   ! frequency of sea-ice call
    USE icevar         ! sea-ice: operations
+   USE icefsd  , ONLY : ice_fsd_cleanup  ! subroutine to remove small/negative values and renormalise FSD
    !
    USE in_out_manager ! I/O manager
    USE iom            ! I/O manager library
@@ -44,6 +45,7 @@ MODULE icedyn_adv_pra
    REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   sxap , syap , sxxap , syyap , sxyap    ! melt pond fraction
    REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   sxvp , syvp , sxxvp , syyvp , sxyvp    ! melt pond volume
    REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   sxvl , syvl , sxxvl , syyvl , sxyvl    ! melt pond lid volume
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   sxfsd, syfsd, sxxfsd, syyfsd, sxyfsd   ! floe-size distribution
 
    !! * Substitutions
 #  include "do_loop_substitute.h90"
@@ -54,7 +56,8 @@ MODULE icedyn_adv_pra
 CONTAINS
 
    SUBROUTINE ice_dyn_adv_pra(         kt, pu_ice, pv_ice, ph_i, ph_s, ph_ip,  &
-      &                        pato_i, pv_i, pv_s, psv_i, poa_i, pa_i, pa_ip, pv_ip, pv_il, pe_s, pe_i, pszv_i )
+      &                        pato_i, pv_i, pv_s, psv_i, poa_i, pa_i, pa_ip, pv_ip, pv_il, pe_s, pe_i, pszv_i, &
+      &                        pa_ifsd )
       !!----------------------------------------------------------------------
       !!                **  routine ice_dyn_adv_pra  **
       !!
@@ -84,6 +87,7 @@ CONTAINS
       REAL(wp), DIMENSION(:,:,:,:), INTENT(inout) ::   pe_s       ! snw heat content
       REAL(wp), DIMENSION(:,:,:,:), INTENT(inout) ::   pe_i       ! ice heat content
       REAL(wp), DIMENSION(:,:,:,:), INTENT(inout) ::   pszv_i     ! ice salt content
+      REAL(wp), DIMENSION(:,:,:,:), INTENT(inout) ::   pa_ifsd    ! floe size distribution
       !
       INTEGER  ::   ji, jj, jk, jl, jt, ihls ! dummy loop indices
       INTEGER  ::   icycle                   ! number of sub-timestep for the advection
@@ -102,6 +106,7 @@ CONTAINS
       REAL(wp), ALLOCATABLE, DIMENSION(:,:)    ::   z0ap , z0vp, z0vl, zh_ip
       REAL(wp), ALLOCATABLE, DIMENSION(:,:)    ::   z0smi, zs_i 
       REAL(wp), ALLOCATABLE, DIMENSION(:,:,:)  ::   z0si , zsz_i
+      REAL(wp), ALLOCATABLE, DIMENSION(:,:,:)  ::   z0fsd
       !! diagnostics
       REAL(wp), DIMENSION(A2D(0))         ::   zdiag_adv_mass, zdiag_adv_salt, zdiag_adv_heat
       !!----------------------------------------------------------------------
@@ -112,6 +117,7 @@ CONTAINS
       IF( nn_icesal == 4 ) THEN   ;     ALLOCATE( z0si (jpi,jpj,nlay_i), zsz_i(jpi,jpj,nlay_i) )
       ELSE                        ;     ALLOCATE( z0smi(jpi,jpj)       , zs_i (jpi,jpj)        )
       ENDIF
+      IF( ln_fsd ) ALLOCATE( z0fsd(jpi,jpj,nn_nfsd) )
       
       ! --- If ice drift is too fast, use  subtime steps for advection (CFL test for stability) --- !
       !        Note: the advection split is applied at the next time-step in order to avoid blocking global comm.
@@ -245,6 +251,12 @@ CONTAINS
                END_2D
             ENDIF
             !
+            IF ( ln_fsd ) THEN
+               DO_3D( ihls+1, ihls+1, ihls+1, ihls+1, 1, nn_nfsd )
+                  z0fsd(ji,jj,jk) = pa_ifsd(ji,jj,jk,jl) * e1e2t(ji,jj)
+               END_3D
+            ENDIF
+            !
             ! ----------------------- !
             ! ==> start advection <== !
             ! ----------------------- !
@@ -298,6 +310,15 @@ CONTAINS
                   CALL adv_x( ihls, jl, zdt , zudy , 1._wp , zarea , z0vl , sxvl , sxxvl , syvl , syyvl , sxyvl )       !--- melt pond lid volume
                   CALL adv_y( ihls, jl, zdt , zvdx , 0._wp , zarea , z0vl , sxvl , sxxvl , syvl , syyvl , sxyvl )
                ENDIF
+               !
+               IF ( ln_fsd ) THEN
+                  DO jk = 1, nn_nfsd                                                                                    !--- floe size distribution
+                     CALL adv_x( ihls, jl, zdt, zudy, 1._wp, zarea, z0fsd(:,:,jk), sxfsd(:,:,jk,:),   &
+                        &                          sxxfsd(:,:,jk,:), syfsd(:,:,jk,:), syyfsd(:,:,jk,:), sxyfsd(:,:,jk,:) )
+                     CALL adv_y( ihls, jl, zdt, zvdx, 0._wp, zarea, z0fsd(:,:,jk), sxfsd(:,:,jk,:),   &
+                        &                          sxxfsd(:,:,jk,:), syfsd(:,:,jk,:), syyfsd(:,:,jk,:), sxyfsd(:,:,jk,:) )
+                  END DO
+               ENDIF
                !                                                               !--------------------------------------------!
             ELSE                                                               !== even ice time step:  adv_y then adv_x  ==!
                !                                                               !--------------------------------------------!
@@ -349,6 +370,15 @@ CONTAINS
                   CALL adv_x( ihls, jl, zdt , zudy , 0._wp , zarea , z0vl , sxvl , sxxvl , syvl , syyvl , sxyvl )
                ENDIF
                !
+               IF ( ln_fsd ) THEN
+                  DO jk = 1, nn_nfsd                                                                                    !--- floe size distribution
+                     CALL adv_y( ihls, jl, zdt, zvdx, 1._wp, zarea, z0fsd(:,:,jk)  , sxfsd (:,:,jk,:),   &
+                        &                         sxxfsd(:,:,jk,:), syfsd(:,:,jk,:), syyfsd(:,:,jk,:), sxyfsd(:,:,jk,:) )
+                     CALL adv_x( ihls, jl, zdt, zudy, 0._wp, zarea, z0fsd(:,:,jk)  , sxfsd (:,:,jk,:),   &
+                        &                         sxxfsd(:,:,jk,:), syfsd(:,:,jk,:), syyfsd(:,:,jk,:), sxyfsd(:,:,jk,:) )
+                  END DO
+               ENDIF
+               !
             ENDIF
 
             ! --- Recover the properties from their contents --- !
@@ -379,6 +409,12 @@ CONTAINS
                   pv_ip(ji,jj,jl) = z0vp(ji,jj) * r1_e1e2t(ji,jj) * tmask(ji,jj,1)
                   pv_il(ji,jj,jl) = z0vl(ji,jj) * r1_e1e2t(ji,jj) * tmask(ji,jj,1)
                END_2D
+            ENDIF
+            !
+            IF ( ln_fsd ) THEN
+               DO_3D( ihls, ihls, ihls, ihls, 1, nn_nfsd )
+                  pa_ifsd(ji,jj,jk,jl) = z0fsd(ji,jj,jk) * r1_e1e2t(ji,jj) * tmask(ji,jj,1)
+               END_3D
             ENDIF
                         
             ! --- diagnostics --- !
@@ -418,6 +454,8 @@ CONTAINS
          !     Remove negative values (conservation is ensured)
          !     (because advected fields are not perfectly bounded and tiny negative values can occur, e.g. -1.e-20)
          CALL ice_var_zapneg( ihls, zdt, pv_i, pv_s, psv_i, poa_i, pa_i, pa_ip, pv_ip, pv_il, pe_s, pe_i, pszv_i )
+         !
+         IF ( ln_fsd ) CALL ice_fsd_cleanup( pa_ifsd )
          !
          ! derive open water from ice concentration
          DO_2D( 0, 0, 0, 0 )
@@ -475,6 +513,10 @@ CONTAINS
                   &                          , pe_i  , 'T', 1._wp, sxe   , 'T', -1._wp, sye   , 'T', -1._wp  & ! ice enthalpy
                   &                          , sxxe  , 'T', 1._wp, syye  , 'T',  1._wp, sxye  , 'T',  1._wp, ldfull = .TRUE. )
             ENDIF
+            IF( ln_fsd ) THEN
+               CALL lbc_lnk( 'icedyn_adv_pra', pa_ifsd,'T', 1._wp, sxfsd , 'T', -1._wp, syfsd , 'T', -1._wp  & ! floe size distribution
+                  &                          , sxxfsd, 'T', 1._wp, syyfsd, 'T',  1._wp, sxyfsd, 'T',  1._wp, ldfull = .TRUE. )
+            ENDIF 
             !
          ELSEIF( jt == icycle ) THEN             ! comm. on the moments at the end of advection
             !                                    ! comm. on the other fields are gathered in icedyn.F90
@@ -520,6 +562,10 @@ CONTAINS
                   &                          , sxe   , 'T', -1._wp, sye   , 'T', -1._wp  &                   ! ice enthalpy
                   &                          , sxxe  , 'T',  1._wp, syye  , 'T',  1._wp, sxye  , 'T',  1._wp, ldfull = .TRUE. )
             ENDIF
+            IF ( ln_fsd ) THEN
+               CALL lbc_lnk( 'icedyn_adv_pra', sxfsd , 'T', -1._wp, syfsd , 'T', -1._wp  &                   ! floe size distribution
+                  &                          , sxxfsd, 'T',  1._wp, syyfsd, 'T',  1._wp, sxyfsd , 'T',  1._wp, ldfull = .TRUE. )
+            ENDIF
             !
          ENDIF
          !
@@ -534,6 +580,7 @@ CONTAINS
       IF( nn_icesal == 4 ) THEN   ;     DEALLOCATE( z0si , zsz_i )
       ELSE                        ;     DEALLOCATE( z0smi, zs_i  )
       ENDIF
+      IF ( ln_fsd )                     DEALLOCATE( z0fsd )
       !
    END SUBROUTINE ice_dyn_adv_pra
 
@@ -1190,7 +1237,7 @@ CONTAINS
       !!
       !! ** Purpose :   allocate and initialize arrays for Prather advection
       !!-------------------------------------------------------------------
-      INTEGER ::   ierr(4), ii, ierr_max
+      INTEGER ::   ierr(5), ii, ierr_max
       !!-------------------------------------------------------------------
       !
       ierr(:) = 0
@@ -1229,6 +1276,13 @@ CONTAINS
          ALLOCATE( sxap (jpi,jpj,jpl) , syap (jpi,jpj,jpl) , sxxap (jpi,jpj,jpl) , syyap (jpi,jpj,jpl) , sxyap (jpi,jpj,jpl) , &
             &      sxvp (jpi,jpj,jpl) , syvp (jpi,jpj,jpl) , sxxvp (jpi,jpj,jpl) , syyvp (jpi,jpj,jpl) , sxyvp (jpi,jpj,jpl) , &
             &      sxvl (jpi,jpj,jpl) , syvl (jpi,jpj,jpl) , sxxvl (jpi,jpj,jpl) , syyvl (jpi,jpj,jpl) , sxyvl (jpi,jpj,jpl) , &
+            &      STAT = ierr(ii) )
+      ENDIF
+      !
+      ii = ii + 1
+      IF ( ln_fsd ) THEN
+         ALLOCATE( sxfsd(jpi,jpj,nn_nfsd,jpl), syfsd(jpi,jpj,nn_nfsd,jpl), sxxfsd(jpi,jpj,nn_nfsd,jpl) , &
+            &      syyfsd(jpi,jpj,nn_nfsd,jpl), sxyfsd(jpi,jpj,nn_nfsd,jpl)                            , &
             &      STAT = ierr(ii) )
       ENDIF
       !
@@ -1419,6 +1473,9 @@ CONTAINS
                sxap = 0._wp ;   syap = 0._wp    ;   sxxap = 0._wp    ;   syyap = 0._wp    ;   sxyap = 0._wp       ! melt pond fraction
                sxvp = 0._wp ;   syvp = 0._wp    ;   sxxvp = 0._wp    ;   syyvp = 0._wp    ;   sxyvp = 0._wp       ! melt pond volume
                sxvl = 0._wp ;   syvl = 0._wp    ;   sxxvl = 0._wp    ;   syyvl = 0._wp    ;   sxyvl = 0._wp       ! melt pond lid volume
+            ENDIF
+            IF( ln_fsd ) THEN
+               sxfsd = 0._wp;  syfsd = 0._wp    ;  sxxfsd = 0._wp    ;  syyfsd = 0._wp    ;  sxyfsd = 0._wp       ! floe size distribution
             ENDIF
          ENDIF
          !

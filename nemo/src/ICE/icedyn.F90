@@ -22,6 +22,7 @@ MODULE icedyn
    USE icecor         ! sea-ice: corrections
    USE icevar  , ONLY : ice_var_zapsmall
    USE icectl         ! sea-ice: control prints
+   USE icefsd  , ONLY : a_ifsd   ! sea-ice: floe size distribution
    !
    USE in_out_manager ! I/O manager
    USE iom            ! I/O manager library
@@ -199,6 +200,9 @@ CONTAINS
             &                    t_su, 'T', 1._wp, ldfull = .TRUE. )
       ENDIF
       CALL lbc_lnk( 'icedyn', e_i, 'T', 1._wp, e_s, 'T', 1._wp, szv_i, 'T', 1._wp, ldfull = .TRUE. )
+      IF( ln_fsd ) THEN
+         CALL lbc_lnk( 'icedyn', a_ifsd, 'T', 1._wp, ldfull = .TRUE. )
+      ENDIF
       !
       ! controls
       IF( ln_timing )   CALL timing_stop ('ice_dyn')

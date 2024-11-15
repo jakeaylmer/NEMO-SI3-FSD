@@ -25,7 +25,8 @@ MODULE icefsd
    
    PUBLIC ::   &
       ice_fsd_init, &   ! routine called by icestp.F90
-      ice_fsd_wri       ! routine called by icestp.F90  
+      ice_fsd_wri,  &   ! routine called by icestp.F90
+      ice_fsd_cleanup   ! routine called by ice_dyn_adv_pra
    
    REAL(wp), ALLOCATABLE, DIMENSION(:) ::   &
       floe_rad_u,    &  ! FSD categories upper bounds (floe radii in m)
@@ -191,6 +192,62 @@ CONTAINS
       ENDIF
       
    END SUBROUTINE ice_fsd_wri
+   
+   
+   SUBROUTINE ice_fsd_cleanup(a_ifsd_arr)
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE ice_fsd_cleanup  ***
+      !!
+      !! ** Purpose :   Remove small/negative values and re-normalise
+      !! 
+      !! ** Input   :   Array corresponding to the FSD per thickness category
+      !!                (coded as an input so that it can be either the main
+      !!                prognostic variable or the advected field used by
+      !!                advection routines).
+      !!
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(jpi,jpj,nn_nfsd,jpl), INTENT(inout) ::   &
+         a_ifsd_arr
+      !
+      REAL(wp) :: totfrac   ! for normalisation
+      
+      INTEGER ::   &
+         ji, jj, jl, jf   ! dummy variables for loop indices 
+      !
+      !!-------------------------------------------------------------------
+      
+      DO jl = 1, jpl
+         DO_2D( 0, 0, 0, 0 )
+            
+            ! Remove negative and/or very small values in each FSD category.
+            ! (note: icevar.F90 subroutine ice_var_zapsmall uses epsi10 = 1e-10)
+            DO jf = 1, nn_nfsd
+               IF (a_ifsd_arr(ji,jj,jf,jl) <= epsi10) THEN
+                  a_ifsd_arr(ji,jj,jf,jl) = 0.0_wp
+               ENDIF
+            ENDDO
+            
+            ! Compute total ice fraction for this grid cell, this ice thickness
+            ! category:
+            totfrac = SUM(a_ifsd_arr(ji,jj,:,jl))
+            
+            IF (totfrac >= epsi10) THEN
+               ! Re-normalise (totfrac should be exactly 1, but due to numerical
+               ! noise it will be slightly different):
+               DO jf = 1, nn_nfsd
+                  a_ifsd_arr(ji,jj,jf,jl) = a_ifsd_arr(ji,jj,jf,jl) / totfrac
+               ENDDO
+            ELSE
+               ! ... but if it is practically zero, assume an ice-free grid cell
+               ! and set to exactly zero:
+               a_ifsd_arr(ji,jj,:,jl) = 0.0_wp
+            ENDIF
+            
+         END_2D
+      ENDDO
+      
+   END SUBROUTINE ice_fsd_cleanup
    
    
    SUBROUTINE fsd_initbounds
