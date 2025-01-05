@@ -140,7 +140,8 @@ CONTAINS
       ! --- transport --- !
       zudy(:,:) = pu_ice(:,:) * e2u(:,:)
       zvdx(:,:) = pv_ice(:,:) * e1v(:,:)
-      
+     
+      IF( lwp .AND. icycle > 1 )   WRITE(numout,*) 'icedyn_adv: CFL=',NINT(zcfl*10)/10.,' => number of cycles=',icycle
       !---------------!
       !== advection ==!
       !---------------!
@@ -421,29 +422,29 @@ CONTAINS
             DO_2D( 0, 0, 0, 0 )
                diag_adv_mass(ji,jj) = diag_adv_mass(ji,jj) + ( pv_i (ji,jj,jl) * rhoi + pv_s (ji,jj,jl) * rhos &
                   &                                        +   pv_ip(ji,jj,jl) * rhow + pv_il(ji,jj,jl) * rhow &
-                  &                                          - zdiag_adv_mass(ji,jj) ) * z1_dt
+                  &                                          - zdiag_adv_mass(ji,jj) ) * r1_Dt_ice
                diag_adv_heat(ji,jj) = diag_adv_heat(ji,jj) + ( -SUM( pe_i(ji,jj,1:nlay_i,jl) ) -SUM( pe_s(ji,jj,1:nlay_s,jl) ) &
-                  &                                          - zdiag_adv_heat(ji,jj) ) * z1_dt
+                  &                                          - zdiag_adv_heat(ji,jj) ) * r1_Dt_ice
             END_2D
             IF( nn_icesal == 4 ) THEN
                DO_2D( 0, 0, 0, 0 )
                   diag_adv_salt(ji,jj) = diag_adv_salt(ji,jj) + ( SUM( pszv_i(ji,jj,1:nlay_i,jl) ) * rhoi &
-                     &                                          - zdiag_adv_salt(ji,jj) ) * z1_dt
+                     &                                          - zdiag_adv_salt(ji,jj) ) * r1_Dt_ice
                END_2D
             ELSE
                 DO_2D( 0, 0, 0, 0 )
                   diag_adv_salt(ji,jj) = diag_adv_salt(ji,jj) + ( psv_i(ji,jj,jl) * rhoi &
-                     &                                          - zdiag_adv_salt(ji,jj) ) * z1_dt
+                     &                                          - zdiag_adv_salt(ji,jj) ) * r1_Dt_ice
                END_2D
             ENDIF
 
             ! --- Make sure ice thickness is not too big --- !
             !     (because ice thickness can be too large where ice concentration is very small)
-            CALL Hbig_pra( ihls, jl, zdt, zhi_max, zhs_max, zhip_max, zsi_max, zes_max, zei_max, zszi_max, &
+            CALL Hbig_pra( ihls, jl, rDt_ice, zhi_max, zhs_max, zhip_max, zsi_max, zes_max, zei_max, zszi_max, &
                &            pv_i, pv_s, pa_i, pa_ip, pv_ip, psv_i, pe_s, pe_i, pszv_i )
             !
             ! --- Ensure snow load is not too big --- !
-            CALL Hsnow_pra( ihls, jl, zdt, pv_i, pv_s, pa_i, pa_ip, pe_s )
+            CALL Hsnow_pra( ihls, jl, rDt_ice, pv_i, pv_s, pa_i, pa_ip, pe_s )
             !
          END DO
          !                       ! ================= !
@@ -453,7 +454,7 @@ CONTAINS
          ! --- Ensure non-negative fields --- !
          !     Remove negative values (conservation is ensured)
          !     (because advected fields are not perfectly bounded and tiny negative values can occur, e.g. -1.e-20)
-         CALL ice_var_zapneg( ihls, zdt, pv_i, pv_s, psv_i, poa_i, pa_i, pa_ip, pv_ip, pv_il, pe_s, pe_i, pszv_i )
+         CALL ice_var_zapneg( ihls, rDt_ice, pv_i, pv_s, psv_i, poa_i, pa_i, pa_ip, pv_ip, pv_il, pe_s, pe_i, pszv_i )
          !
          IF ( ln_fsd ) CALL ice_fsd_cleanup( pa_ifsd )
          !
