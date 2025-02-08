@@ -14,6 +14,7 @@ MODULE icefsd
    !!   ice_fsd_init : namelist read
    !!----------------------------------------------------------------------
    USE par_ice         ! SI3 parameters
+   USE ice1D           ! sea-ice: thermodynamics variables
    USE ice             ! sea-ice: variables
    
    USE in_out_manager  ! I/O manager (needed for lwm and lwp logicals)
@@ -24,9 +25,12 @@ MODULE icefsd
    PRIVATE
    
    PUBLIC ::   &
-      ice_fsd_init, &   ! routine called by icestp.F90
-      ice_fsd_wri,  &   ! routine called by icestp.F90
-      ice_fsd_cleanup   ! routine called by ice_dyn_adv_pra
+      ice_fsd_init,               &   ! routine called by icestp.F90
+      ice_fsd_wri,                &   ! routine called by icestp.F90
+      ice_fsd_cleanup,            &   ! routine called by ice_dyn_adv_pra
+      ice_fsd_partition_newice,   &   ! routine called by ice_thd_do
+      ice_fsd_add_newice,         &   ! routine called by ice_thd_do
+      ice_fsd_thd_evolve              ! routine called by ice_thd_do
    
    REAL(wp), ALLOCATABLE, DIMENSION(:) ::   &
       floe_rad_u,    &  ! FSD categories upper bounds (floe radii in m)
@@ -44,12 +48,464 @@ MODULE icefsd
       a_ifsd            ! FSD per ice thickness category (called modified-areal
       !                 ! FSD in Roach et al., 2018, JGR: Oceans)
 
+   REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:) ::   &
+      a_ifsd_2d         ! Reduced dimension version of a_ifsd for thermodynamic
+      !                 ! calculations. The 2 horizontal spatial dimensions are
+      !                 ! reduced to 1D -- the whole array is actually reduced
+      !                 ! from 4D to 3D, i.e., (space, FSD cat., ITD cat.), but
+      !                 ! in analogy to e_i and szv_i, which have ice layer and
+      !                 ! ITD cat. dimensions, I have called it _2d
+
    !! * Substitutions
 #  include "do_loop_substitute.h90"
 #  include "read_nml_substitute.h90"
 
 CONTAINS
-   
+
+
+   SUBROUTINE ice_fsd_partition_newice( ki, pv_newice, pv_latgro, pda_latgro )
+      !!-------------------------------------------------------------------
+      !!            ***  ROUTINE ice_fsd_partition_newice  ***
+      !!
+      !! ** Purpose :   Partition total new ice volume into new ice formation
+      !!                in open water and lateral growth of existing ice
+      !!
+      !! ** Method  :   Calculate lead area and lateral surface area of floes
+      !!                following Horvat and Tziperman (2015):
+      !!
+      !!                A_lead = int [ f(r,h) * (2*r_lw/r + (r_lw/r)**2) ] dr dh
+      !!                A_lat  = int [ f(r,h) * (2*h/r) ] dr dh
+      !!
+      !!                where A_lead = lead area (per unit ocean area)
+      !!                      A_lat  = total area of vertical edges of floes
+      !!                               (per unit ocean area)
+      !!                      int    = integral over floe size r and thickness h
+      !!                      f(r,h) = g(h)L(r,h) floe size-thickness distribution
+      !!
+      !!                The lead width r_lw is the annulus surrounding floes for
+      !!                which freezing of existing floes occurs, distinguished
+      !!                from 'open water area' in which new ice forms away from
+      !!                existing ice. Hence, 'lead area' plus 'open water area'
+      !!                equals one minus sea ice concentration. See Horvat and
+      !!                Tziperman (2015), sect. 2.1 and Fig. 1 for details.
+      !!                Following Roach et al. (2018), the smallest floe size
+      !!                is used for r_lw.
+      !!
+      !!                The lateral growth volume (in the 'lead area') is then:
+      !!
+      !!                v_latgro = v_newice * A_lead / [ 1 + (at_i / A_lat) ]
+      !!
+      !!                where v_newice = total new ice growth
+      !!                      at_i     = sea ice concentration
+      !!
+      !!                v_newice, initially calculated in ice_thd_do from which
+      !!                this routine is called, is then updated by subtracting
+      !!                v_latgro. In ice_thd_do, it is then used to add new ice
+      !!                in open water (as usual since there is no lateral growth
+      !!                by default, i.e., without FSD) and the total new ice
+      !!                volume added, now (v_newice + v_latgro), is unchanged.
+      !!
+      !! ** Input   :   ki              : 1D thermodynamic array index
+      !!                pv_newice       : volume of new ice to grow in total as
+      !!                                  calculated in ice_thd_do, before
+      !!                                  accounting for FSD (ln_fsd) and/or
+      !!                                  frazil ice collection (ln_frazil)
+      !!
+      !! ** Output  :   pv_newice       : input updated by subtracting pv_latgro
+      !!                                  (so it now represents new ice volume
+      !!                                  grown in open water).
+      !!                pv_latgro       : volume of ice to grow laterally on
+      !!                                  existing floes in the lead area
+      !!                pda_latgro(jpl) : a_i change due to lateral growth of
+      !!                                  existing floes in each thickness cat.
+      !!
+      !! ** Note    :   no updates to ice concentration, volume, or FSD
+      !!                prognostic variables are made in this routine. That is
+      !!                done in the routines: ice_thd_do, ice_fsd_thd_evolve,
+      !!                and ice_fsd_add_newice.
+      !!
+      !! ** References
+      !!    ----------
+      !!    Horvat, C., & Tziperman, E. (2015).
+      !!              A prognostic model of the sea-ice floe size and thickness distribution.
+      !!              The Cryosphere, 9, 2119-2134.
+      !!    Roach, L. A., Horvat, C., Dean, S. M., & Bitz, C. M. (2018).
+      !!              An emergent sea ice floe size distribution in a global coupled ocean-sea ice model
+      !!              Journal of Geophysical Research: Oceans, 123(6), 4322-4337.
+      !!
+      !!-------------------------------------------------------------------
+      !
+      INTEGER                 , INTENT(in)    ::   ki           ! 1-D thermodynamic array index
+      REAL(wp)                , INTENT(inout) ::   pv_newice    ! total new ice volume (from ice_thd_do)
+      REAL(wp)                , INTENT(out)   ::   pv_latgro    ! lateral growth volume
+      REAL(wp), DIMENSION(jpl), INTENT(out)   ::   pda_latgro   ! a_i change due to lateral growth
+      !
+      INTEGER  ::   jl, jf        ! dummy loop indices
+      REAL(wp) ::   za_lead       ! lead area for open water growth (per unit ocean area)
+      REAL(wp) ::   za_lat_surf   ! lateral surface area of floes (per unit ocean area)
+      REAL(wp) ::   zh_i          ! ice thickness (m)
+      REAL(wp) ::   zr_lw         ! width of lead region (m)
+      !
+      !!-------------------------------------------------------------------
+
+      pv_latgro     = 0._wp   ! initialise
+      pda_latgro(:) = 0._wp
+      za_lead       = 0._wp
+      za_lat_surf   = 0._wp
+      zr_lw = floe_rad_c(1)   ! smallest floe size for width of lead region
+
+      ! --- Calculate za_lead and za_lat_surf (integrate/sum over thickness
+      !     and floe size cats.):
+      DO jl = 1, jpl
+
+         ! need ice thickness (m) for za_lat_surf:
+         IF ( a_i_2d(ki,jl) > 0._wp ) THEN
+            zh_i = v_i_2d(ki,jl) / a_i_2d(ki,jl)
+         ELSE
+            zh_i = 0._wp
+         ENDIF
+
+         DO jf = 1, nn_nfsd
+            !
+            za_lead = za_lead + a_i_2d(ki,jl) * a_ifsd_2d(ki,jf,jl)   &
+               &                * (2._wp * zr_lw / floe_rad_c(jf)     &
+               &                   + zr_lw**2 / floe_rad_c(jf)**2)
+            !
+            za_lat_surf = za_lat_surf + a_ifsd_2d(ki,jf,jl) * a_i_2d(ki,jl) &
+               &                          * 2._wp * zh_i / floe_rad_c(jf)
+            !
+         ENDDO
+      ENDDO
+
+      ! --- Lead area cannot exceed open water fraction and must be > 0:
+      za_lead = MAX( 0._wp, MIN( za_lead, 1._wp - at_i_1d(ki) ) )
+
+      ! --- Calculate lateral growth volume, zv_latgro, and the change in a_i
+      !     due to lateral growth, or leave both as 0 if no lateral growth:
+      IF (za_lat_surf > epsi10) THEN
+
+         pv_latgro = pv_newice * za_lead / (1._wp + at_i_1d(ki) / za_lat_surf)
+
+         DO jl = 1, jpl
+            DO jf = 1, nn_nfsd
+
+               ! note lateral growth rate = zv_latgro / rDt_ice, but here we
+               ! calculate the growth over time step which is just zv_latgro:
+               pda_latgro(jl) = pda_latgro(jl)                                  &
+                  &             + 2._wp * a_i_2d(ki,jl) * a_ifsd_2d(ki,jf,jl)   &
+                  &                     * pv_latgro / floe_rad_c(jf)
+
+            ENDDO
+         ENDDO
+
+         IF ( SUM(pda_latgro) >= za_lead ) THEN
+            ! --- Cannot expand ice laterally beyond the lead region
+            !     so normalise net lateral area growth to equal lead area:
+            pda_latgro(:) = pda_latgro(:) / SUM(pda_latgro)
+            pda_latgro(:) = pda_latgro(:) * za_lead
+         ENDIF
+
+      ENDIF
+
+      ! --- Update volume of new ice to grow in open water:
+      pv_newice = pv_newice - pv_latgro
+
+   END SUBROUTINE ice_fsd_partition_newice
+
+
+   SUBROUTINE ice_fsd_add_newice( ki, kl, pa_newice, pa_i_before )
+      !!-------------------------------------------------------------------
+      !!                ***  ROUTINE ice_fsd_add_newice  ***
+      !!
+      !! ** Purpose :   Add new ice growth in open water (not lateral growth
+      !!                of existing ice) to the floe size distribution in the
+      !!                appropriate floe size and thickness categories
+      !!
+      !! ** Method  :   New ice is added to the smallest floe size category.
+      !!                The floe size distribution for the specified thickness
+      !!                category is updated accordingly.
+      !!
+      !! ** Input   :   ki          : 1D thermodynamic array index
+      !!                kl          : thickness category new ice is added to
+      !!                pa_newice   : area fraction of new ice formation
+      !!                pa_i_before : ice concentration *after* lateral growth
+      !!                              but *before* new ice growth at 1-D array
+      !!                              index ki and in thickness category kl
+      !!
+      !! ** Note    :   This routine only updates the floe size distribution,
+      !!                not ice concentration a_i, which is done in ice_thd_do
+      !!
+      !!-------------------------------------------------------------------
+      !
+      INTEGER , INTENT(in) ::   ki            ! 1-D thermodynamic array index
+      INTEGER , INTENT(in) ::   kl            ! thickness cat. new ice added to
+      REAL(wp), INTENT(in) ::   pa_newice     ! area fraction of new ice
+      REAL(wp), INTENT(in) ::   pa_i_before   ! a_i at 1-D index ki, in thickness
+      !                                       ! cat. = kl, after lat. growth of
+      !                                       ! existing ice but before addition
+      !                                       ! of pa_newice
+      !
+      INTEGER ::   jf   ! dummy loop index
+      !
+      !!-------------------------------------------------------------------
+
+      IF( pa_newice > 0._wp ) THEN
+         IF( SUM(a_ifsd_2d(ki,:,kl)) > epsi10 ) THEN
+            !
+            ! --- Add new ice to smallest floe size category
+            !
+            ! The area fraction of ice in the smallest floe size category, r0,
+            ! and thickness category to which new ice is added, h, is:
+            !
+            !    [ L(r0,h)g(h)drdh ]_before = a_ifsd_2d(ki,1,kl) * pa_i_before
+            !
+            ! before addition of pa_newice. Then, after addition of new ice:
+            !
+            !    [ L(r0,h)g(h)drdh ]_after = [ L(r0,h)g(h)drdh ]_before + pa_newice
+            !
+            ! g(h) is already updated in ice_thd_do, but L(r0,h) needs updating
+            ! too, achieved by rearranging the above. This is why it is necessary
+            ! to pass pa_i_before to this routine rather than just using a_i_2d.
+            !
+            a_ifsd_2d(ki,1,kl) = (a_ifsd_2d(ki,1,kl)*pa_i_before + pa_newice)   &
+               &                 / (pa_i_before + pa_newice)
+
+            ! --- Adjust other floe size categories
+            !
+            ! New ice area is only added to one floe size category, r0.
+            ! So for the remaining floe size categories, r:
+            !
+            !    [ L(r,h)g(h)drdh ]_after = [ L(r,h)g(h)drdh ]_before
+            !
+            ! Since g(h)_before != g(h)_after, L(r,h)_before != L(r,h)_after.
+            ! Rearranging gives L(r,h)_after and is thus updated:
+            !
+            DO jf = 2, nn_nfsd
+               a_ifsd_2d(ki,jf,kl) = a_ifsd_2d(ki,jf,kl)*pa_i_before   &
+                  &                  / (pa_i_before + pa_newice)
+            ENDDO
+
+         ELSE
+            !
+            ! --- Entirely new ice: put in smallest floe size category and
+            !     specified thickness category:
+            a_ifsd_2d(ki, 1        , kl) = 1._wp
+            a_ifsd_2d(ki, 2:nn_nfsd, kl) = 0._wp
+
+         ENDIF
+      ENDIF
+
+      CALL fsd_cleanup( a_ifsd_2d(ki,:,kl) )
+
+   END SUBROUTINE ice_fsd_add_newice
+
+
+   SUBROUTINE ice_fsd_thd_evolve( ki, kl, pG_r )
+      !!-------------------------------------------------------------------
+      !!               ***  ROUTINE ice_fsd_thd_evolve  ***
+      !!
+      !! ** Purpose :   Evolve the floe size distribution subject to lateral
+      !!                growth/melt
+      !!
+      !! ** Method  :   dL(r,h)/dt = -G_r * div_r(L) + (2/r) * G_r * L(r,h)
+      !!
+      !!                where L(r,h) is the floe size (r) distribution at
+      !!                             thickness h
+      !!                      div_r  is divergence in r-space
+      !!                      G_r    is the lateral growth/melt rate, assumed
+      !!                             to be independent of r and h, and G_r > 0
+      !!                             implies growth
+      !!
+      !!                This equation is derived by Horvat and Tziperman (2015)
+      !!                and adapted to the modified-areal floe size distribution
+      !!                L(r,h) by Roach et al. (2018). This routine integrates
+      !!                it forwards (for one thickness category) by one model
+      !!                time step using adaptive time stepping (Horvat and
+      !!                Tziperman, 2017). The adaptive time step is calculated
+      !!                by function rDt_ice_fsd().
+      !!
+      !! ** Input   :   ki   : 1D thermodynamic array index
+      !!                kl   : index of thickness category being evolved
+      !!                pG_r : lateral growth/melt rate in m/s
+      !!
+      !! ** References
+      !!    ----------
+      !!    Horvat, C., & Tziperman, E. (2015).
+      !!              A prognostic model of the sea-ice floe size and thickness distribution.
+      !!              The Cryosphere, 9, 2119-2134.
+      !!    Horvat, C., & Tziperman, E. (2017).
+      !!              The evolution of scaling laws in the sea ice floe size distribution.
+      !!              Journal of Geophysical Research: Oceans, 122(9), 7630-7650.
+      !!    Roach, L. A., Horvat, C., Dean, S. M., & Bitz, C. M. (2018).
+      !!              An emergent sea ice floe size distribution in a global coupled ocean-sea ice model
+      !!              Journal of Geophysical Research: Oceans, 123(6), 4322-4337.
+      !!
+      !!-------------------------------------------------------------------
+      !
+      INTEGER , INTENT(in)         ::   ki                ! 1-D thermodynamic array index
+      INTEGER , INTENT(in)         ::   kl                ! thickness category
+      REAL(wp), INTENT(in)         ::   pG_r              ! lateral growth/melt rate (m/s)
+      !
+      REAL(wp), DIMENSION(nn_nfsd) ::   za_ifsd_tend      ! FSD tendency (left side of eq. above)
+      REAL(wp), DIMENSION(nn_nfsd) ::   zdiv_fsd          ! divergence term in equation
+      REAL(wp)                     ::   zfsd_cor          ! correction factor to ensure area conservation
+      REAL(wp)                     ::   zdt_sub           ! adaptive time step (s)
+      REAL(wp)                     ::   ztelapsed         ! time elapsed during adaptive time stepping
+      INTEGER                      ::   isubt             ! to track number of adaptive time steps used
+      INTEGER                      ::   jf                ! dummy loop index
+      !
+      INTEGER , PARAMETER          ::   isubt_max = 100   ! max. adaptive time steps before warning
+      !!-------------------------------------------------------------------
+
+      ! --- Start adaptive time stepping
+      ztelapsed = 0._wp
+      isubt     = 0
+
+      DO WHILE (ztelapsed < rDt_ice)
+
+         za_ifsd_tend(:) = 0._wp   ! initialise (or reset with loop iteration)
+         zdiv_fsd    (:) = 0._wp
+
+         ! --- Calculate the divergence term [div(L), without the -G_r factor]
+         !     of the FSD thermodynamic tendency equation using the divergence
+         !     theorem.
+         !
+         ! The divergence in floe category jf equals the net 'flux' of floes
+         ! out of that category. Since only growth or melt occurs at once, the
+         ! array indices are different depending on the sign of pG_r. In
+         ! growth, floes move from smaller to larger floe size categories only,
+         ! so the 'flux' of floes from category jf is directed into category
+         ! jf+1, while for melt it is into category jf-1.
+         !
+         IF( pG_r > 0._wp ) THEN   ! lateral growth
+
+            DO jf = 2, nn_nfsd-1
+               zdiv_fsd(jf) = (   (a_ifsd_2d(ki,jf,  kl) / floe_binwidth(jf)   ) &
+                  &             - (a_ifsd_2d(ki,jf-1,kl) / floe_binwidth(jf-1) ) )
+            ENDDO
+
+            ! Smallest category: no 'floe flux' from smaller category:
+            zdiv_fsd(1) = a_ifsd_2d(ki,1,kl) / floe_binwidth(1)
+
+            ! Largest category: no 'floe flux' leaving this category:
+            zdiv_fsd(nn_nfsd) = -a_ifsd_2d(ki,nn_nfsd-1,kl) / floe_binwidth(nn_nfsd-1)
+
+         ELSE   ! pG_r < 0; lateral melt
+
+            DO jf = 2, nn_nfsd-1
+               zdiv_fsd(jf) = (   (a_ifsd_2d(ki,jf  , kl) / floe_binwidth(jf  ) ) &
+                  &             - (a_ifsd_2d(ki,jf+1, kl) / floe_binwidth(jf+1) ) )
+            ENDDO
+
+            ! Smallest category: no 'floe flux' leaving this category:
+            zdiv_fsd(1) =  -a_ifsd_2d(ki,2,kl) / floe_binwidth(2)
+
+            ! Largest category: no 'floe flux' from larger category:
+            zdiv_fsd(nn_nfsd) = a_ifsd_2d(ki,nn_nfsd,kl) / floe_binwidth(nn_nfsd)
+
+         ENDIF
+
+         ! --- Correction term
+         !
+         ! Sum over all floe size categories of the tendency equation must (in
+         ! theory) be zero, because int(L dr) = 1 by definition, and so
+         ! d/dt( int(L dr)) = 0. The divergence term also integrates to zero:
+         ! indeed all elements of zdiv_fsd computed above cancel out when summed.
+         ! Therefore, second term on RHS should sum to zero. In case of noise,
+         ! which would manifest as spurious ice area, compute its integral,
+         ! zfsd_cor, and subtract it from the actual tendency in each category
+         ! weighted by that category's area fraction.
+         !
+         zfsd_cor = 2._wp * pG_r * SUM( a_ifsd_2d(ki,:,kl) / floe_rad_c(:) )
+
+         ! --- Compute rate of change of FSD in each floe size category:
+         DO jf = 1, nn_nfsd
+            za_ifsd_tend(jf) = -pG_r * zdiv_fsd(jf)                                              &
+               &               + 2._wp * pG_r * a_ifsd_2d(ki,jf,kl) * (1._wp / floe_rad_c(jf))   &
+               &               - a_ifsd_2d(ki,jf,kl) * zfsd_cor
+         ENDDO
+
+         ! --- Compute adaptive timestep to increment FSD at this rate
+         !     and make sure we do not overshoot actual time step:
+         zdt_sub = rDt_ice_fsd(a_ifsd_2d(ki,:,kl), za_ifsd_tend(:))
+         zdt_sub = MIN(zdt_sub, rDt_ice - ztelapsed)
+
+         ! --- Update FSD and elapsed time:
+         a_ifsd_2d(ki,:,kl) = a_ifsd_2d(ki,:,kl) + zdt_sub * za_ifsd_tend(:)
+         ztelapsed          = ztelapsed + zdt_sub
+         isubt              = isubt + 1
+
+         IF( isubt > isubt_max ) THEN
+            CALL ctl_warn('ice_fsd_thd_evolve not converging: ',              &
+               &          ' reached maximum number of adaptive time steps')
+         ENDIF
+
+      ENDDO
+
+      CALL fsd_cleanup( a_ifsd_2d(ki,:,kl) )
+
+   END SUBROUTINE ice_fsd_thd_evolve
+
+
+   FUNCTION rDt_ice_fsd( pafsd_init, pafsd_tend )
+      !!-------------------------------------------------------------------
+      !!                   *** FUNCTION rDt_ice_fsd ***
+      !!
+      !! ** Purpose :   Calculate adaptive time step for evolving the floe
+      !!                size distribution subject to lateral growth/melt
+      !!
+      !! ** Method  :   Calculate time step restrictions for incrementing the
+      !!                current FSD at a specified rate, in each floe size
+      !!                category. See Horvat and Tziperman (2017), Appendix A.
+      !!
+      !! ** Input   :   pafsd_init(nn_nfsd) : current value of FSD
+      !!                pafsd_tend(nn_nfsd) : required tendency of FSD
+      !!
+      !! ** Output  :   rDt_ice_fsd         : maximum time step satisfying all
+      !!                                      restrictions in each floe size
+      !!                                      category and
+      !!                                      0 < rDt_ice_fsd <= rDt_ice
+      !!
+      !! ** References
+      !!    ----------
+      !!    Horvat, C. & Tziperman, E. (2017).
+      !!              The evolution of scaling laws in the sea ice floe size distribution.
+      !!              Journal of Geophysical Research: Oceans, 122(9), 7630-7650.
+      !!
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pafsd_init   ! current FSD
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pafsd_tend   ! required FSD tendency
+      !
+      REAL(wp), DIMENSION(nn_nfsd)             ::   zdt_restr    ! time step restrictions
+      INTEGER                                  ::   jf           ! dummy loop index
+      !
+      REAL(wp) ::   rDt_ice_fsd   ! adaptive time step for FSD calculations
+      !
+      !!-------------------------------------------------------------------
+
+      ! --- Calculate maximum possible time step in each floe category
+      !     and save to zdt_restr
+      !
+      ! Afterwards we select the maximum possible time step, but it cannot be
+      ! larger than the model time step so can safely use that as the initial/
+      ! default value (in case of no tendency) of zdt_restr:
+      zdt_restr(:) = rDt_ice
+
+      DO jf = 1, nn_nfsd
+         IF( pafsd_tend(jf) > epsi10 ) THEN
+            zdt_restr(jf) = (1._wp - pafsd_init(jf)) / pafsd_tend(jf)
+         ENDIF
+         IF( pafsd_tend(jf) < -epsi10 ) THEN
+            zdt_restr(jf) = pafsd_init(jf) / ABS(pafsd_tend(jf))
+         ENDIF
+      ENDDO
+
+      rDt_ice_fsd = MIN(rDt_ice, MINVAL(zdt_restr))
+
+   END FUNCTION rDt_ice_fsd
+
+
    FUNCTION fsd_leff_cat()
       !!-------------------------------------------------------------------
       !!                 ***  ROUTINE fsd_leff_cat  ***
@@ -194,59 +650,73 @@ CONTAINS
    END SUBROUTINE ice_fsd_wri
    
    
-   SUBROUTINE ice_fsd_cleanup(a_ifsd_arr)
+   SUBROUTINE fsd_cleanup(pa_ifsd_jl)
+      !!-------------------------------------------------------------------
+      !!                   ***  ROUTINE fsd_cleanup  ***
+      !!
+      !! ** Purpose :   Remove small/negative values and re-normalise floe
+      !!                size distribution
+      !! ** Input   :   FSD for one grid cell and one thickness category
+      !!
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(inout) ::   pa_ifsd_jl
+      !
+      REAL(wp) ::   ztotfrac   ! for normalisation
+      INTEGER  ::   jf         ! dummy loop index
+      !
+      !!-------------------------------------------------------------------
+
+      ! Remove negative and/or very small values in each FSD category.
+      ! (note: icevar.F90 subroutine ice_var_zapsmall uses epsi10 = 1e-10)
+      DO jf = 1, nn_nfsd
+         IF (pa_ifsd_jl(jf) <= epsi10) THEN
+            pa_ifsd_jl(jf) = 0._wp
+         ENDIF
+      ENDDO
+
+      ! Compute total ice fraction for this grid cell and thickness category:
+      ztotfrac = SUM(pa_ifsd_jl(:))
+
+      IF (ztotfrac >= epsi10) THEN
+         ! Ensure normalisation:
+         DO jf = 1, nn_nfsd
+            pa_ifsd_jl(jf) = pa_ifsd_jl(jf) / ztotfrac
+         ENDDO
+      ELSE
+         ! Assume an ice-free grid cell and set to exactly zero:
+         pa_ifsd_jl(:) = 0._wp
+      ENDIF
+
+   END SUBROUTINE fsd_cleanup
+
+
+   SUBROUTINE ice_fsd_cleanup(pa_ifsd)
       !!-------------------------------------------------------------------
       !!                 ***  ROUTINE ice_fsd_cleanup  ***
       !!
-      !! ** Purpose :   Remove small/negative values and re-normalise
+      !! ** Purpose :   Remove small/negative values and re-normalise floe
+      !!                size distribution (wrapper of fsd_cleanup intended
+      !!                for main FSD variable a_ifsd or intermediate variables
+      !!                used in other calculations such as advection).
       !! 
-      !! ** Input   :   Array corresponding to the FSD per thickness category
-      !!                (coded as an input so that it can be either the main
-      !!                prognostic variable or the advected field used by
-      !!                advection routines).
+      !! ** Input   :   4-D array representing FSD for all grid cells (2-D),
+      !!                all thickness categories.
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp), DIMENSION(jpi,jpj,nn_nfsd,jpl), INTENT(inout) ::   &
-         a_ifsd_arr
+      REAL(wp), DIMENSION(jpi,jpj,nn_nfsd,jpl), INTENT(inout) ::   pa_ifsd
       !
-      REAL(wp) :: totfrac   ! for normalisation
-      
-      INTEGER ::   &
-         ji, jj, jl, jf   ! dummy variables for loop indices 
+      INTEGER ::   ji, jj, jl   ! dummy loop indices
       !
       !!-------------------------------------------------------------------
-      
+
       DO jl = 1, jpl
          DO_2D( 0, 0, 0, 0 )
-            
-            ! Remove negative and/or very small values in each FSD category.
-            ! (note: icevar.F90 subroutine ice_var_zapsmall uses epsi10 = 1e-10)
-            DO jf = 1, nn_nfsd
-               IF (a_ifsd_arr(ji,jj,jf,jl) <= epsi10) THEN
-                  a_ifsd_arr(ji,jj,jf,jl) = 0.0_wp
-               ENDIF
-            ENDDO
-            
-            ! Compute total ice fraction for this grid cell, this ice thickness
-            ! category:
-            totfrac = SUM(a_ifsd_arr(ji,jj,:,jl))
-            
-            IF (totfrac >= epsi10) THEN
-               ! Re-normalise (totfrac should be exactly 1, but due to numerical
-               ! noise it will be slightly different):
-               DO jf = 1, nn_nfsd
-                  a_ifsd_arr(ji,jj,jf,jl) = a_ifsd_arr(ji,jj,jf,jl) / totfrac
-               ENDDO
-            ELSE
-               ! ... but if it is practically zero, assume an ice-free grid cell
-               ! and set to exactly zero:
-               a_ifsd_arr(ji,jj,:,jl) = 0.0_wp
-            ENDIF
-            
+            CALL fsd_cleanup( pa_ifsd(ji,jj,:,jl) )
          END_2D
       ENDDO
-      
+
    END SUBROUTINE ice_fsd_cleanup
    
    
@@ -358,13 +828,26 @@ CONTAINS
       INTEGER ::   ierr   ! ALLOCATE status return value
       !
       !!-------------------------------------------------------------------
-      
+
       ALLOCATE(a_ifsd(jpi, jpj, nn_nfsd, jpl), STAT=ierr)
-      
+
       IF (ierr /= 0) THEN
          CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd)')
-      ENDIF        
-      
+      ENDIF
+
+      ! Allocate reduced-dimensions version for thermodynamics.
+      !
+      ! Note: for other SI3 variables these are allocated by ice1D_alloc() (in
+      ! ice1d.F90) which is called by ice_init (in icestp.F90) only. Seems no
+      ! harm to have this here (this subroutine is only called if
+      ! ln_fsd = .true.) but in the future it may be better to move this
+      ! allocation there (and the above allocation of a_ifsd into ice.F90).
+      ALLOCATE(a_ifsd_2d(jpij, nn_nfsd, jpl), STAT=ierr)
+
+      IF (ierr /= 0) THEN
+         CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd_2d)')
+      ENDIF
+
    END SUBROUTINE fsd_alloc
    
    
@@ -381,7 +864,8 @@ CONTAINS
       !!-------------------------------------------------------------------
       !
       REAL(wp), PARAMETER ::   &
-         alpha = 2.1_wp   ! parameter from Perovich and Jones (2014) 
+         !alpha = 2.1_wp   ! parameter from Perovich and Jones (2014) 
+         alpha = 1.1_wp   ! parameter from Perovich and Jones (2014) 
       
       REAL(wp) ::   &
          totfrac          ! for normalising
