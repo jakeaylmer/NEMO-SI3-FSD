@@ -309,7 +309,7 @@ CONTAINS
                   ENDIF
                   !
                   ! Update FSD due to lateral growth:
-                  CALL ice_fsd_thd_evolve( ii, jl, zv_latgro / rDt_ice )
+                  CALL ice_fsd_thd_evolve( a_ifsd_2d(ii,:,jl), zv_latgro / rDt_ice )
                   !
                ENDIF
                ! ------------------------------ !

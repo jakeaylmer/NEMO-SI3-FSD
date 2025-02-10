@@ -284,7 +284,7 @@ CONTAINS
    END SUBROUTINE ice_fsd_add_newice
 
 
-   SUBROUTINE ice_fsd_thd_evolve( ki, kl, pG_r )
+   SUBROUTINE ice_fsd_thd_evolve( pa_ifsd, pG_r )
       !!-------------------------------------------------------------------
       !!               ***  ROUTINE ice_fsd_thd_evolve  ***
       !!
@@ -308,9 +308,9 @@ CONTAINS
       !!                Tziperman, 2017). The adaptive time step is calculated
       !!                by function rDt_ice_fsd().
       !!
-      !! ** Input   :   ki   : 1D thermodynamic array index
-      !!                kl   : index of thickness category being evolved
-      !!                pG_r : lateral growth/melt rate in m/s
+      !! ** Input   :   pa_ifsd(nn_nfsd) : floe size distribution at one grid
+      !!                                   point and for one thickness category
+      !!                pG_r             : lateral growth/melt rate in m/s
       !!
       !! ** References
       !!    ----------
@@ -326,9 +326,8 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      INTEGER , INTENT(in)         ::   ki                ! 1-D thermodynamic array index
-      INTEGER , INTENT(in)         ::   kl                ! thickness category
-      REAL(wp), INTENT(in)         ::   pG_r              ! lateral growth/melt rate (m/s)
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(inout) ::   pa_ifsd   ! FSD at one location, one thickness cat.
+      REAL(wp),                     INTENT(in)    ::   pG_r      ! lateral growth/melt rate (m/s)
       !
       REAL(wp), DIMENSION(nn_nfsd) ::   za_ifsd_tend      ! FSD tendency (left side of eq. above)
       REAL(wp), DIMENSION(nn_nfsd) ::   zdiv_fsd          ! divergence term in equation
@@ -364,28 +363,28 @@ CONTAINS
          IF( pG_r > 0._wp ) THEN   ! lateral growth
 
             DO jf = 2, nn_nfsd-1
-               zdiv_fsd(jf) = (   (a_ifsd_2d(ki,jf,  kl) / floe_dr(jf)   )   &
-                  &             - (a_ifsd_2d(ki,jf-1,kl) / floe_dr(jf-1) ) )
+               zdiv_fsd(jf) = (   (pa_ifsd(jf  ) / floe_dr(jf  ) )     &
+                  &             - (pa_ifsd(jf-1) / floe_dr(jf-1) ) )
             ENDDO
 
             ! Smallest category: no 'floe flux' from smaller category:
-            zdiv_fsd(1) = a_ifsd_2d(ki,1,kl) / floe_dr(1)
+            zdiv_fsd(1) = pa_ifsd(1) / floe_dr(1)
 
             ! Largest category: no 'floe flux' leaving this category:
-            zdiv_fsd(nn_nfsd) = -a_ifsd_2d(ki,nn_nfsd-1,kl) / floe_dr(nn_nfsd-1)
+            zdiv_fsd(nn_nfsd) = -pa_ifsd(nn_nfsd-1) / floe_dr(nn_nfsd-1)
 
          ELSE   ! pG_r < 0; lateral melt
 
             DO jf = 2, nn_nfsd-1
-               zdiv_fsd(jf) = (   (a_ifsd_2d(ki,jf  , kl) / floe_dr(jf  ) )   &
-                  &             - (a_ifsd_2d(ki,jf+1, kl) / floe_dr(jf+1) ) )
+               zdiv_fsd(jf) = (   (pa_ifsd(jf  ) / floe_dr(jf  ) )     &
+                  &             - (pa_ifsd(jf+1) / floe_dr(jf+1) ) )
             ENDDO
 
             ! Smallest category: no 'floe flux' leaving this category:
-            zdiv_fsd(1) =  -a_ifsd_2d(ki,2,kl) / floe_dr(2)
+            zdiv_fsd(1) =  -pa_ifsd(2) / floe_dr(2)
 
             ! Largest category: no 'floe flux' from larger category:
-            zdiv_fsd(nn_nfsd) = a_ifsd_2d(ki,nn_nfsd,kl) / floe_dr(nn_nfsd)
+            zdiv_fsd(nn_nfsd) = pa_ifsd(nn_nfsd) / floe_dr(nn_nfsd)
 
          ENDIF
 
@@ -400,22 +399,22 @@ CONTAINS
          ! zfsd_cor, and subtract it from the actual tendency in each category
          ! weighted by that category's area fraction.
          !
-         zfsd_cor = 2._wp * pG_r * SUM( a_ifsd_2d(ki,:,kl) / floe_rc(:) )
+         zfsd_cor = 2._wp * pG_r * SUM( pa_ifsd(:) / floe_rc(:) )
 
          ! --- Compute rate of change of FSD in each floe size category:
          DO jf = 1, nn_nfsd
-            za_ifsd_tend(jf) = -pG_r * zdiv_fsd(jf)                                           &
-               &               + 2._wp * pG_r * a_ifsd_2d(ki,jf,kl) * (1._wp / floe_rc(jf))   &
-               &               - a_ifsd_2d(ki,jf,kl) * zfsd_cor
+            za_ifsd_tend(jf) = -pG_r * zdiv_fsd(jf)                                   &
+               &               + 2._wp * pG_r * pa_ifsd(jf) * (1._wp / floe_rc(jf))   &
+               &               - pa_ifsd(jf) * zfsd_cor
          ENDDO
 
          ! --- Compute adaptive timestep to increment FSD at this rate
          !     and make sure we do not overshoot actual time step:
-         zdt_sub = rDt_ice_fsd(a_ifsd_2d(ki,:,kl), za_ifsd_tend(:))
+         zdt_sub = rDt_ice_fsd( pa_ifsd(:), za_ifsd_tend(:) )
          zdt_sub = MIN(zdt_sub, rDt_ice - ztelapsed)
 
          ! --- Update FSD and elapsed time:
-         a_ifsd_2d(ki,:,kl) = a_ifsd_2d(ki,:,kl) + zdt_sub * za_ifsd_tend(:)
+         pa_ifsd(:) = pa_ifsd(:) + zdt_sub * za_ifsd_tend(:)
          ztelapsed          = ztelapsed + zdt_sub
          isubt              = isubt + 1
 
@@ -426,12 +425,12 @@ CONTAINS
 
       ENDDO
 
-      CALL fsd_cleanup( a_ifsd_2d(ki,:,kl) )
+      CALL fsd_cleanup( pa_ifsd(:) )
 
    END SUBROUTINE ice_fsd_thd_evolve
 
 
-   FUNCTION rDt_ice_fsd( pafsd_init, pafsd_tend )
+   FUNCTION rDt_ice_fsd( pa_ifsd_init, pa_ifsd_tend )
       !!-------------------------------------------------------------------
       !!                   *** FUNCTION rDt_ice_fsd ***
       !!
@@ -442,8 +441,8 @@ CONTAINS
       !!                current FSD at a specified rate, in each floe size
       !!                category. See Horvat and Tziperman (2017), Appendix A.
       !!
-      !! ** Input   :   pafsd_init(nn_nfsd) : current value of FSD
-      !!                pafsd_tend(nn_nfsd) : required tendency of FSD
+      !! ** Input   :   pa_ifsd_init(nn_nfsd) : current value of FSD
+      !!                pa_ifsd_tend(nn_nfsd) : required tendency of FSD
       !!
       !! ** Output  :   rDt_ice_fsd         : maximum time step satisfying all
       !!                                      restrictions in each floe size
@@ -458,8 +457,8 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pafsd_init   ! current FSD
-      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pafsd_tend   ! required FSD tendency
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pa_ifsd_init   ! current FSD
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in) ::   pa_ifsd_tend   ! required FSD tendency
       !
       REAL(wp), DIMENSION(nn_nfsd)             ::   zdt_restr    ! time step restrictions
       INTEGER                                  ::   jf           ! dummy loop index
@@ -477,11 +476,11 @@ CONTAINS
       zdt_restr(:) = rDt_ice
 
       DO jf = 1, nn_nfsd
-         IF( pafsd_tend(jf) > epsi10 ) THEN
-            zdt_restr(jf) = (1._wp - pafsd_init(jf)) / pafsd_tend(jf)
+         IF( pa_ifsd_tend(jf) > epsi10 ) THEN
+            zdt_restr(jf) = (1._wp - pa_ifsd_init(jf)) / pa_ifsd_tend(jf)
          ENDIF
-         IF( pafsd_tend(jf) < -epsi10 ) THEN
-            zdt_restr(jf) = pafsd_init(jf) / ABS(pafsd_tend(jf))
+         IF( pa_ifsd_tend(jf) < -epsi10 ) THEN
+            zdt_restr(jf) = pa_ifsd_init(jf) / ABS(pa_ifsd_tend(jf))
          ENDIF
       ENDDO
 
