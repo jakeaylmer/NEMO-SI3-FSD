@@ -29,7 +29,8 @@ MODULE icefsd
    PUBLIC ::   ice_fsd_cleanup            ! routine called by ice_dyn_adv_pra
    PUBLIC ::   ice_fsd_partition_newice   ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_add_newice         ! routine called by ice_thd_do
-   PUBLIC ::   ice_fsd_thd_evolve         ! routine called by ice_thd_do
+   PUBLIC ::   ice_fsd_thd_evolve         ! routine called by ice_thd_d{a,o}
+   PUBLIC ::   fsd_peri_dens              ! function called by ice_thd_da
 
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   floe_rl   !: FSD floe radii, lower bounds of categories (m)
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   floe_rc   !: FSD floe radii, centre       of categories (m)
@@ -39,6 +40,7 @@ MODULE icefsd
 
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   a_ifsd      !: FSD per ice thickness category
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   a_ifsd_2d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
+   REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:)     ::   a_ifsd_1d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
 
    !! * Substitutions
 #  include "do_loop_substitute.h90"
@@ -374,17 +376,26 @@ CONTAINS
             zdiv_fsd(nn_nfsd) = -pa_ifsd(nn_nfsd-1) / floe_dr(nn_nfsd-1)
 
          ELSE   ! pG_r < 0; lateral melt
-
+            !
+            ! Note 'flux' of floes from category jf+1 goes into category jf
+            ! which is a convergence in category jf, so need a minus sign
+            ! for that term. But that minus sign is already provided by
+            ! pG_r < 0, so need to add an extra minus sign to this and
+            ! other 'flux' terms throughout so it cancels out later.
+            !
+            ! ToDo: may be clearer to write these fluxes with zG_r
+            !       included in both growth and melt cases?
+            !
             DO jf = 2, nn_nfsd-1
-               zdiv_fsd(jf) = (   (pa_ifsd(jf  ) / floe_dr(jf  ) )     &
-                  &             - (pa_ifsd(jf+1) / floe_dr(jf+1) ) )
+               zdiv_fsd(jf) = (   (pa_ifsd(jf+1) / floe_dr(jf+1) )     &
+                  &             - (pa_ifsd(jf  ) / floe_dr(jf  ) ) )
             ENDDO
 
             ! Smallest category: no 'floe flux' leaving this category:
-            zdiv_fsd(1) =  -pa_ifsd(2) / floe_dr(2)
+            zdiv_fsd(1) = pa_ifsd(2) / floe_dr(2)
 
             ! Largest category: no 'floe flux' from larger category:
-            zdiv_fsd(nn_nfsd) = pa_ifsd(nn_nfsd) / floe_dr(nn_nfsd)
+            zdiv_fsd(nn_nfsd) = -pa_ifsd(nn_nfsd) / floe_dr(nn_nfsd)
 
          ENDIF
 
@@ -415,8 +426,8 @@ CONTAINS
 
          ! --- Update FSD and elapsed time:
          pa_ifsd(:) = pa_ifsd(:) + zdt_sub * za_ifsd_tend(:)
-         ztelapsed          = ztelapsed + zdt_sub
-         isubt              = isubt + 1
+         ztelapsed  = ztelapsed + zdt_sub
+         isubt      = isubt + 1
 
          IF( isubt > isubt_max ) THEN
             CALL ctl_warn('ice_fsd_thd_evolve not converging: ',              &
@@ -487,6 +498,54 @@ CONTAINS
       rDt_ice_fsd = MIN(rDt_ice, MINVAL(zdt_restr))
 
    END FUNCTION rDt_ice_fsd
+
+
+   FUNCTION fsd_peri_dens( pa_ifsd )
+      !!-------------------------------------------------------------------
+      !!                   *** ROUTINE ice_fsd_peri ***
+      !!
+      !! ** Purpose :   Calculate floe perimeter density from floe size
+      !!                distribution
+      !!
+      !! ** Method  :   P = int[ (2/r) * F(r) dr ]
+      !!
+      !!                where F(r) = floe size distribution
+      !!                      int  = integral over all floe sizes, r
+      !!
+      !! ** Note    :  Perimeter density is the total perimeter of an
+      !!               ensemble of floes divided by the total sea ice area
+      !!               (Bateson et al. 2022). Multiply result by sea ice
+      !!               concentation to get floe perimeter per unit ocean
+      !!               area.
+      !!
+      !! ** Input   :  pa_ifsd(nn_nfsd) : floe size distribution. Can be for one
+      !!               ice thickness category [e.g., a_ifsd(ji,jj,:,jl) ] or for
+      !!               all ice [e.g., sum over jl of a_i(ji,jj,jl) * a_ifsd(ji,jj,:,jl)].
+      !!
+      !! ** Output  :  Perimeter density [m.m-2]
+      !!
+      !! ** References
+      !!    ----------
+      !!    Bateson, A. W., Feltham, D. L., Schroeder, D. S., Wang, Y., Hwang, B., Ridley, J. K. & Aksenov, Y. (2022).
+      !!              Sea ice floe size: its impact on pan-Arctic and local ice mass and required model complexity.
+      !!              The Cryosphere, 16, 2565-2593.
+      !!
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in)  ::   pa_ifsd   ! floe size distribution
+      REAL(wp)  :: fsd_peri_dens
+      !
+      INTEGER ::   jf   ! dummy loop index
+      !
+      !!-------------------------------------------------------------------
+
+      fsd_peri_dens = 0._wp   ! initialise
+
+      DO jf = 1, nn_nfsd
+         fsd_peri_dens = fsd_peri_dens + 2._wp * pa_ifsd(jf) / floe_rc(jf)
+      ENDDO
+
+   END FUNCTION fsd_peri_dens
 
 
    FUNCTION fsd_leff_cat()
@@ -805,7 +864,7 @@ CONTAINS
          CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd)')
       ENDIF
 
-      ! Allocate reduced-dimensions version for thermodynamics.
+      ! Allocate reduced-dimensions versions for thermodynamics.
       !
       ! Note: for other SI3 variables these are allocated by ice1D_alloc() (in
       ! ice1d.F90) which is called by ice_init (in icestp.F90) only. Seems no
@@ -816,6 +875,12 @@ CONTAINS
 
       IF (ierr /= 0) THEN
          CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd_2d)')
+      ENDIF
+
+      ALLOCATE(a_ifsd_1d(jpij, nn_nfsd), STAT=ierr)
+
+      IF (ierr /= 0) THEN
+         CALL ctl_stop('fsd_alloc: could not allocate FSD array (a_ifsd_1d)')
       ENDIF
 
    END SUBROUTINE fsd_alloc

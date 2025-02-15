@@ -17,6 +17,7 @@ MODULE icethd_da
    USE par_ice        ! SI3 parameters
    USE phycst  , ONLY : rpi, rt0, rhoi, rhos
    USE ice1D          ! sea-ice: thermodynamics variables
+   USE icefsd  , ONLY : fsd_peri_dens, ice_fsd_thd_evolve, a_ifsd_1d
    !
    USE in_out_manager , ONLY : numnam_ice_ref, numnam_ice_cfg, numout, numoni, lwp, lwm  ! I/O manager
    USE lib_mpp        , ONLY : ctl_stop, ctl_warn, ctl_nam                               ! MPP library
@@ -84,6 +85,10 @@ CONTAINS
       !!               Birnbaum and Lupkes (2002), Lupkes and Birnbaum (2005). They are reviewed in Lupkes et al 2012
       !!               A simpler implementation for CICE can be found in Bitz et al (2001) and Tsamados et al (2015)
       !!
+      !!               If using prognostic floe size distribution (FSD), P above is instead calculated from the FSD
+      !!               for the given thickness category (using external function fsd_peri_dens) and the change in A
+      !!               for the given thickness category is calculated accordingly using the same lateral melt rate W.
+      !!
       !! ** References
       !!    Bitz, C. M., Holland, M. M., Weaver, A. J., & Eby, M. (2001).
       !!              Simulating the ice‐thickness distribution in a coupled climate model.
@@ -107,8 +112,8 @@ CONTAINS
       !!              Processes controlling surface, bottom and lateral melt of Arctic sea ice in a state of the art sea ice model.
       !!              Phil. Trans. R. Soc. A, 373(2052), 20140167.
       !!---------------------------------------------------------------------
-      INTEGER  ::   ji     ! dummy loop indices
-      REAL(wp)            ::   zastar, zdfloe, zperi, zwlat, zda, zda_tot
+      INTEGER  ::   ji, jf     ! dummy loop indices
+      REAL(wp)            ::   zastar, zdfloe, zperi, zwlat, zda, zda_tot, zG_r
       REAL(wp), PARAMETER ::   zdmax = 300._wp
       REAL(wp), PARAMETER ::   zcs   = 0.66_wp
       REAL(wp), PARAMETER ::   zm1   = 3.e-6_wp
@@ -124,20 +129,43 @@ CONTAINS
          ELSE                        ;   zs_i(:) = s_i_1d (ji)    !     bulk salinity otherwise (for conservation purpose)
          ENDIF
          !
-         ! --- Calculate reduction of total sea ice concentration --- !
-         zdfloe = rn_dmin * ( zastar / ( zastar - at_i_1d(ji) ) )**rn_beta         ! Mean floe caliper diameter [m]
-         !
-         zperi  = at_i_1d(ji) * rpi / ( zcs * zdfloe )                             ! Mean perimeter of the floe [m.m-2]
-         !                                                                         !    = N*pi*D = (A/cs*D^2)*pi*D
          zwlat  = zm1 * ( MAX( 0._wp, sst_1d(ji) - ( t_bo_1d(ji) - rt0 ) ) )**zm2  ! Melt speed rate [m/s]
          !
-         zda_tot = MIN( zwlat * zperi * rDt_ice, at_i_1d(ji) )                     ! sea ice concentration decrease (>0)
-      
-         ! --- Distribute reduction among ice categories and calculate associated ice-ocean fluxes --- !
-         IF( a_i_1d(ji) > 0._wp ) THEN
+         IF( ln_fsd ) THEN
+            ! --- Calculate reduction of sea ice concentration (category)
+            !     using perimeter density from floe size distribution.
+            !     Note FSD perimeter density is per unit sea ice area,
+            !     multiply by sea ice concentration here to get per unit
+            !     ocean area as required.
+            !
+            zperi = a_i_1d(ji) * fsd_peri_dens( a_ifsd_1d(ji,:) )
+            !
+            zda = zwlat * zperi * rDt_ice
+            !
+            IF( zda > a_i_1d(ji) ) THEN
+               zda = a_i_1d(ji)
+               zG_r = -zda / (zperi * rDt_ice)
+            ELSE
+               zG_r = -zwlat
+            ENDIF
+            !
+         ELSE
+            ! --- Calculate reduction of total sea ice concentration --- !
+            zdfloe = rn_dmin * ( zastar / ( zastar - at_i_1d(ji) ) )**rn_beta      ! Mean floe caliper diameter [m]
+            !
+            zperi  = at_i_1d(ji) * rpi / ( zcs * zdfloe )                          ! Mean perimeter of the floe [m.m-2]
+            !                                                                      !    = N*pi*D = (A/cs*D^2)*pi*D
+            !
+            zda_tot = MIN( zwlat * zperi * rDt_ice, at_i_1d(ji) )                  ! sea ice concentration decrease (>0)
+            !
             ! decrease of concentration for the category jl
             !    each category contributes to melting in proportion to its concentration
             zda = MIN( a_i_1d(ji), zda_tot * a_i_1d(ji) / at_i_1d(ji) )
+            !
+         ENDIF
+         !
+         ! --- Update variables and calculate associated ice-ocean fluxes --- !
+         IF( a_i_1d(ji) > 0._wp ) THEN
             
             ! Contribution to salt flux
             sfx_lam_1d(ji) = sfx_lam_1d(ji) + rhoi * zda * r1_Dt_ice * h_i_1d(ji) * r1_nlay_i * SUM( zs_i(:) ) 
@@ -151,6 +179,9 @@ CONTAINS
             
             ! new concentration
             a_i_1d(ji) = a_i_1d(ji) - zda
+
+            ! update floe size distribution
+            IF( ln_fsd ) CALL ice_fsd_thd_evolve( a_ifsd_1d(ji,:), zG_r )
 
             ! ensure that h_i = 0 where a_i = 0
             IF( a_i_1d(ji) == 0._wp ) THEN

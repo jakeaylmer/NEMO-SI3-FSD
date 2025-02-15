@@ -27,6 +27,7 @@ MODULE icethd
    USE icethd_do      ! sea-ice: growth in open water
    USE icethd_pnd     ! sea-ice: melt ponds
    USE iceitd  , ONLY : ice_itd_rem
+   USE icefsd  , ONLY : a_ifsd, a_ifsd_1d
    USE icecor         ! sea-ice: corrections
    USE icetab         ! sea-ice: 1D <==> 2D transformation
    USE icectl         ! sea-ice: control print
@@ -356,6 +357,13 @@ CONTAINS
             CALL tab_2d_1d( npti, nptidx(1:npti), sz_i_1d (1:npti,jk), sz_i (:,:,jk,kl)  )
          END DO
          !
+         ! floe size distribution
+         IF( ln_fsd ) THEN
+            DO jk = 1, nn_nfsd
+               CALL tab_2d_1d( npti, nptidx(1:npti), a_ifsd_1d(1:npti,jk), a_ifsd(:,:,jk,kl) )
+            END DO
+         ENDIF
+         !
          CALL tab_2d_1d( npti, nptidx(1:npti), qprec_ice_1d  (1:npti), qprec_ice            )
          CALL tab_2d_1d( npti, nptidx(1:npti), qsr_ice_1d    (1:npti), qsr_ice (:,:,kl)     )
          CALL tab_2d_1d( npti, nptidx(1:npti), qns_ice_1d    (1:npti), qns_ice (:,:,kl)     )
@@ -469,6 +477,13 @@ CONTAINS
             CALL tab_1d_2d( npti, nptidx(1:npti), sz_i_1d (1:npti,jk), sz_i (:,:,jk,kl)  )
             CALL tab_1d_2d( npti, nptidx(1:npti), szv_i_1d(1:npti,jk), szv_i(:,:,jk,kl)  )
          END DO
+         !
+         ! floe size distribution
+         IF( ln_fsd ) THEN
+            DO jk = 1, nn_nfsd
+               CALL tab_1d_2d( npti, nptidx(1:npti), a_ifsd_1d(1:npti,jk), a_ifsd(:,:,jk,kl) )
+            END DO
+         ENDIF
          !
          CALL tab_1d_2d( npti, nptidx(1:npti), wfx_snw_sni_1d(1:npti), wfx_snw_sni )
          CALL tab_1d_2d( npti, nptidx(1:npti), wfx_snw_sum_1d(1:npti), wfx_snw_sum )
