@@ -42,6 +42,10 @@ MODULE icefsd
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   a_ifsd_2d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:)     ::   a_ifsd_1d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
 
+   ! ** namelist (namfsd) **
+   INTEGER  ::   nn_fsd_ini         ! FSD init. options (0 = none; 1 = all in largest FSD cat; 2 = imposed power law)
+   REAL(wp) ::   rn_fsd_ini_alpha   ! Parameter used for power law initial FSD with nn_icefsd_ini = 2 only
+
    !! * Substitutions
 #  include "do_loop_substitute.h90"
 #  include "read_nml_substitute.h90"
@@ -893,63 +897,74 @@ CONTAINS
       !! ** Purpose :   Set initial values of floe size distribution variable
       !!                a_ifsd.
       !!
-      !! ** Method  :   Either initialise to zero or to a power-law
-      !!                distribution depending on ln_iceini.
+      !! ** Method  :   Set values based on namelist (namfsd) nn_fsd_ini:
+      !!                   0 = no initialisation (i.e., all FSD values = 0)
+      !!                   1 = all ice in largest floe size category
+      !!                   2 = set all grid points, all ice thickness categories
+      !!                       to have an imposed power law distribution. In this
+      !!                       case the number density distribution exponent can
+      !!                       be changed via namelist (namfsd) rn_fsd_ini_alpha
+      !!                       (default = 2.1 as in Perovich and Jones, 2014).
       !!
+      !! ** Note    :   Default nn_fsd_ini = 2. If general ice initialisation
+      !!                flag, ln_iceini, is set to false, then nn_fsd_ini is
+      !!                treated as in case 0 regardless of namelist value, i.e.,
+      !!                no initialisation of the FSD is done. This allows the
+      !!                FSD to 'emerge' from physical processes.
+      !!
+      !! ** References
+      !!    ----------
+      !!    Perovich, D. K. & Jones, K. F. (2014).
+      !!              The seasonal evolution of sea ice floe size distribution.
+      !!              Journal of Geophysical Research: Oceans, 119(12), 8767-8777.
       !!-------------------------------------------------------------------
       !
-      REAL(wp), PARAMETER ::   zalpha = 2.1_wp   ! parameter from Perovich and Jones (2014)
-      !
-      REAL(wp)            ::   ztotfrac          ! for normalising
-      INTEGER             ::   jf, jl            ! dummy variables for loop indices
+      REAL(wp) ::   ztotfrac   ! for normalising
+      INTEGER  ::   jf, jl     ! dummy variables for loop indices
       !
       !!-------------------------------------------------------------------
+
+      a_ifsd(:,:,:,:) = 0._wp
 
       ! This logical probably needs to have an "and no FSD info saved"
       ! (e.g., if restarting?)...
       IF (ln_iceini) THEN
+         !
+         IF( nn_fsd_ini == 1 ) THEN
+            !
+            ! --- Put all ice in largest floe size category
+            !
+            a_ifsd(:,:,nn_nfsd,:) = 1._wp
+            !
+         ELSEIF( nn_fsd_ini == 2) THEN
+            !
+            ! --- Following CICE/Icepack, initialise with a power law distribution
+            !     using parameters given by Perovich and Jones (2014). Fraction of
+            !     sea ice in each floe size and thickness category is the same for
+            !     all grid cells (even where there is no sea ice) initially
+            !
+            ztotfrac = 0._wp
+            !
+            ! Initial FSD is the same for each ice thickness category; calculate
+            ! for first category:
+            DO jf = 1, nn_nfsd
+               ! Calculate power law FSD number distribution based on Perovich
+               ! and Jones (2014) and convert to area fraction distribution:
+               a_ifsd(:,:,jf,1) = (2._wp * floe_rc(jf)) ** (-rn_fsd_ini_alpha - 1._wp)   &
+                  &               * floe_ac(jf) * floe_dr(jf)
 
-         ! Following CICE/Icepack, initialise with a power law distribution
-         ! using parameters given by Perovich and Jones (2014, JGR: Oceans,
-         ! 119(12), 8767-8777, doi:10.1002/2014JC010136)
-         ! 
-         ! Fraction of sea ice in each floe size and thickness category is
-         ! the same for all grid cells (even where there is no sea ice)
-         ! initially
-
-         ztotfrac = 0._wp
-
-         ! Initial FSD is the same for each ice thickness category; calculate
-         ! for first category:        
-         DO jf = 1, nn_nfsd
-            ! 
-            !   ! Calculate power law FSD number distribution based on Perovich
-            !   ! and Jones (2014) and convert to area fraction distribution:
-            ! 
-            a_ifsd(:,:,jf,1) = (2._wp * floe_rc(jf)) ** (-zalpha - 1._wp)   &
-               &               * floe_ac(jf) * floe_dr(jf)
-
-            ztotfrac = ztotfrac + a_ifsd(1,1,jf,1)
-         ENDDO
-
-         a_ifsd(:,:,:,1) = a_ifsd(:,:,:,1) / ztotfrac   ! normalise
-
-         ! Assign same initial FSD to remaining thickness categories:
-         DO jl = 2, jpl
-            a_ifsd(:,:,:,jl) = a_ifsd(:,:,:,1)
-         ENDDO
-
-         IF(lwp) WRITE(numout,*) 'Initialised a_ifsd (to power law distribution)'
-
-      ELSE
-
-         !  Initialise FSD to zero for all categories, which allows the FSD to
-         !  emerge from physical processes
-
-         a_ifsd(:,:,:,:) = 0._wp
-
-         IF(lwp) WRITE(numout,*) 'Initialised a_ifsd (0 everywhere and for all categories)'
-
+               ztotfrac = ztotfrac + a_ifsd(1,1,jf,1)
+            ENDDO
+            !
+            a_ifsd(:,:,:,1) = a_ifsd(:,:,:,1) / ztotfrac   ! normalise
+            !
+            ! Assign same initial FSD to remaining thickness categories:
+            DO jl = 2, jpl
+               a_ifsd(:,:,:,jl) = a_ifsd(:,:,:,1)
+            ENDDO
+            !
+         ENDIF
+         !
       ENDIF
 
    END SUBROUTINE fsd_init
@@ -971,7 +986,7 @@ CONTAINS
       INTEGER ::   jf            ! Local loop index for FSD categories
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
-      NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape
+      NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape, nn_fsd_ini, rn_fsd_ini_alpha
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namfsd)
@@ -983,9 +998,11 @@ CONTAINS
          WRITE(numout,*) 'ice_fsd_init: ice parameters for floe size distribution'
          WRITE(numout,*) '~~~~~~~~~~~~'
          WRITE(numout,*) '   Namelist namfsd:'
-         WRITE(numout,*) '      Floe size distribution activated or not    ln_fsd = ', ln_fsd
-         WRITE(numout,*) '         Number of floe size categories         nn_nfsd = ', nn_nfsd
-         WRITE(numout,*) '         Floe shape parameter              rn_floeshape = ', rn_floeshape
+         WRITE(numout,*) '      Floe size distribution activated or not                    ln_fsd = ', ln_fsd
+         WRITE(numout,*) '         Number of floe size categories                         nn_nfsd = ', nn_nfsd
+         WRITE(numout,*) '         Floe shape parameter                              rn_floeshape = ', rn_floeshape
+         WRITE(numout,*) '         FSD initialisation case                             nn_fsd_ini = ', nn_fsd_ini
+         WRITE(numout,*) '            Power law exponent (nn_fsd_ini = 2 only)   rn_fsd_ini_alpha = ', rn_fsd_ini_alpha
       ENDIF
 
       IF(ln_fsd) THEN
