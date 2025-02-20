@@ -337,4 +337,7 @@
                    ! -- nn_fsd_ini=2 -- !
      rn_fsd_ini_alpha = 2.1             ! Value of alpha parameter (number FSD exponent)
                                         ! (default from Perovich and Jones, 2014; JGR:O)
+                   ! -- floe welding -- !
+     rn_fsd_amin_weld = 0.1             ! Minimum sea ice concentration for floe welding in freezing conditions
+     rn_fsd_c_weld    = 1.e-08          ! Floe welding coefficient (m-2 s-1)
 /

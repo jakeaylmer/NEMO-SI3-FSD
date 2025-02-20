@@ -29,14 +29,18 @@ MODULE icefsd
    PUBLIC ::   ice_fsd_cleanup            ! routine called by ice_dyn_adv_pra
    PUBLIC ::   ice_fsd_partition_newice   ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_add_newice         ! routine called by ice_thd_do
+   PUBLIC ::   ice_fsd_welding            ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_thd_evolve         ! routine called by ice_thd_d{a,o}
    PUBLIC ::   fsd_peri_dens              ! function called by ice_thd_da
 
-   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   floe_rl   !: FSD floe radii, lower bounds of categories (m)
-   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   floe_rc   !: FSD floe radii, centre       of categories (m)
-   REAL(wp),         ALLOCATABLE, DIMENSION(:) ::   floe_ru   !: FSD floe radii, upper bounds of categories (m)
-   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:) ::   floe_dr   !: FSD category widths (m)
-   REAL(wp),         ALLOCATABLE, DIMENSION(:) ::   floe_ac   !: FSD floe areas, floes of radii floe_rc (m2)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rl      !: FSD floe radii, lower bounds of categories (m)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rc      !: FSD floe radii, centre       of categories (m)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ru      !: FSD floe radii, upper bounds of categories (m)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_dr      !: FSD category widths (m)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_al      !: FSD floe areas, floes of radii floe rl (m2)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ac      !: FSD floe areas, floes of radii floe_rc (m2)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_au      !: FSD floe areas, floes of radii floe_ru (m2)
+   INTEGER ,         ALLOCATABLE, DIMENSION(:,:) :: floe_iweld   !: index of FSD cat. two given FSD cats. can weld to
 
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   a_ifsd      !: FSD per ice thickness category
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   a_ifsd_2d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
@@ -45,6 +49,8 @@ MODULE icefsd
    ! ** namelist (namfsd) **
    INTEGER  ::   nn_fsd_ini         ! FSD init. options (0 = none; 1 = all in largest FSD cat; 2 = imposed power law)
    REAL(wp) ::   rn_fsd_ini_alpha   ! Parameter used for power law initial FSD with nn_icefsd_ini = 2 only
+   REAL(wp) ::   rn_fsd_amin_weld   ! Minimum concentration required for floe welding to take effect
+   REAL(wp) ::   rn_fsd_c_weld      ! Floe welding coefficient [m-2.s-1]
 
    !! * Substitutions
 #  include "do_loop_substitute.h90"
@@ -288,6 +294,168 @@ CONTAINS
       CALL fsd_cleanup( a_ifsd_2d(ki,:,kl) )
 
    END SUBROUTINE ice_fsd_add_newice
+
+
+   SUBROUTINE ice_fsd_welding( pa_ifsd, pa_i )
+      !!-------------------------------------------------------------------
+      !!                ***  ROUTINE ice_fsd_welding  ***
+      !!
+      !! ** Purpose :   Evolve the floe size distribution subject to the
+      !!                welding together of floes in freezing conditions
+      !!
+      !! ** Method  :   Floes are assumed to be placed randomly on the domain
+      !!                (grid cell) and the probability of two floes overlapping
+      !!                is described using a coagulation equation:
+      !!
+      !!                dN(x)/dt = 0.5*int[ K(x',x-x') dx'] - int[ K(x,x') dx' ]
+      !!
+      !!                   x    = floe area [m2]
+      !!                   N(x) = number density of floes of area x [m-4]
+      !!
+      !!                K(x1,x2) = c_weld * x1 * x2 * N(x1) * N(x2)
+      !!
+      !!                   K      = coagulation kernel, the number of floe merging
+      !!                            events per unit area of ocean, per unit x1, per
+      !!                            unit x2, per unit time [m-6.s-1]
+      !!                   c_weld = scale factor for welding. Can be interpreted as
+      !!                            the total number of floes that weld with another
+      !!                            per unit area of ocean per unit time, in the case
+      !!                            of a fully ice-covered ocean [m-2.s-1]
+      !!
+      !!                See Roach et al. (2018a,b) for details of theory. The equation
+      !!                is here solved in terms of area floe size distribution [rather
+      !!                than N, using xN(x)dx = f(r)dr] and evolved using adaptive
+      !!                time stepping.
+      !!
+      !! ** Input   :   pa_ifsd(nn_nfsd) : floe size distribution at one grid
+      !!                                   point and for one thickness category
+      !!                pa_i             : sea ice concentration in same thickness cat.
+      !!
+      !! ** Note    :   This routine does not check for local freezing conditions. It
+      !!                does check input sea ice concentration is above a minimum
+      !!                threshold set by namelist parameter rn_fsd_amin_weld. Welding is
+      !!                considered unlikely below this threshold and in such cases this
+      !!                routine does nothing.
+      !!
+      !!                The coefficient c_weld is set by namelist rn_fsd_c_weld, which
+      !!                can be considered a tuning parameter.
+      !!
+      !!                This routine does not modify any other state variables.
+      !!
+      !! ** References
+      !!    ----------
+      !!    Roach, L. A., Smith, M. M., & Dean, S. M. (2018a).
+      !!              Quantifying growth of pancake sea ice floes using images from drifting buoys
+      !!              Journal of Geophysical Research: Oceans, 123(4), 2851-2866.
+      !!    Roach, L. A., Horvat, C., Dean, S. M., & Bitz, C. M. (2018b).
+      !!              An emergent sea ice floe size distribution in a global coupled ocean-sea ice model
+      !!              Journal of Geophysical Research: Oceans, 123(6), 4322-4337.
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(inout) ::   pa_ifsd   ! FSD at one location, one thickness cat.
+      REAL(wp)                    , INTENT(in)    ::   pa_i      ! ice conc. at one location, one thickness cat.
+      !
+      INTEGER , PARAMETER          ::   isubt_max = 100   ! max. adaptive time steps before warning
+      !
+      REAL(wp), DIMENSION(nn_nfsd) ::   zloss, zgain      ! exchange tendencies between FSD categories [1/s]
+      REAL(wp)                     ::   zdfsd_weld        ! change in FSD due to a welding interaction [1/s]
+      REAL(wp)                     ::   zdt_sub           ! adaptive time step [s]
+      REAL(wp)                     ::   ztelapsed         ! time elapsed during adaptive time stepping [s]
+      INTEGER                      ::   isubt             ! to track number of adaptive time steps used
+      INTEGER                      ::   jf1, jf2, jf3     ! dummy loop indices
+      !
+      !!-------------------------------------------------------------------
+
+      ! --- Additional conditions for floe welding (freezing conditions assumed):
+      !        (1) ice concentration exceeds threshold (welding is unlikely
+      !            with low sea ice concentrations)
+      !        (2) must be some ice to weld in the first place (i.e., some
+      !            ice in lower floe size categories)
+      !
+      IF( (pa_i > rn_fsd_amin_weld) .and. (SUM(pa_ifsd(1:nn_nfsd-1)) > epsi10) ) THEN
+
+         ! --- Start adaptive time stepping
+         ztelapsed    = 0._wp
+         isubt        = 0
+
+         DO WHILE (ztelapsed < rDt_ice)
+
+            ! --- Calculate loss and gain rates of fractional area of floes
+            !     in each floe size category due to welding
+            zloss(:) = 0._wp
+            zgain(:) = 0._wp   ! initialise
+
+            DO jf1 = 1, nn_nfsd
+               !
+               ! --- This loop corresponds to calculation of loss in N(x)
+               !     (here, FSD) for each category jf1, i.e., the second term
+               !     of the dN/dt equation. Those losses are also counted as
+               !     gains in other categories jf2 in next loop below. So, the
+               !     gains in category jf1 are calculated indirectly by other
+               !     iterations of this loop.
+               !
+               DO jf2 = 1, nn_nfsd
+                  !
+                  ! --- This loop corresponds to integral in coagulation equation,
+                  !     i.e., considering interactions of floes in category jf1
+                  !     with all other categories (jf2).
+                  !
+                  !     Calculate the loss from category jf1 and add it to
+                  !     zloss(jf1), and add the same to the gain of whichever
+                  !     category welded floes belong to (jf3).
+                  !
+                  !     Note corresponding loss from category jf2 is accounted for
+                  !     when jf1 and jf2 are exchanged (i.e., outer loop).
+                  !
+                  !     If there can be no such welding, jf3 = 0 which is the
+                  !     'missing value' in floe_iweld --> nothing happens.
+                  !
+                  !     Note lack of factor of 0.5 in equation because we just
+                  !     calculate the losses/gains in area fraction directly, i.e.,
+                  !     without explicitly calculating each of the two terms on the
+                  !     right-hand side of the equation.
+                  !
+                  jf3 = floe_iweld(jf1,jf2)
+                  !
+                  IF( jf3 > jf1 ) THEN
+                     zdfsd_weld = rn_fsd_c_weld * floe_ac(jf1) * pa_i * pa_ifsd(jf1) * pa_ifsd(jf2)
+                     zloss(jf1) = zloss(jf1) + zdfsd_weld
+                     zgain(jf3) = zgain(jf3) + zdfsd_weld
+                  ENDIF
+                  !
+               ENDDO
+            ENDDO
+
+            ! --- Compute adaptive timestep to increment FSD at net rate in
+            !     each floe size category (gain - loss), and make sure we do
+            !     not overshoot actual time step:
+            zdt_sub = rDt_ice_fsd( pa_ifsd(:), zgain(:) - zloss(:) )
+            zdt_sub = MIN(zdt_sub, rDt_ice - ztelapsed)
+
+            ! --- Update FSD and time elapsed:
+            pa_ifsd(:) = pa_ifsd(:) + zdt_sub * (zgain(:) - zloss(:))
+            ztelapsed  = ztelapsed + zdt_sub
+            isubt      = isubt + 1
+
+            CALL fsd_cleanup( pa_ifsd )
+
+            ! --- Break adaptive time stepping loop if all ice is in
+            !     the largest floe category (since all possible welding
+            !     has occurred)
+            IF( pa_ifsd(nn_nfsd) > (1._wp - epsi10)) EXIT
+
+            IF( isubt == isubt_max ) THEN
+               CALL ctl_warn('ice_fsd_welding not converging: ',            &
+                  &          'reached maximum number of adaptive time steps')
+            ENDIF
+
+         ENDDO
+
+         CALL fsd_cleanup( pa_ifsd )
+
+      ENDIF
+
+   END SUBROUTINE ice_fsd_welding
 
 
    SUBROUTINE ice_fsd_thd_evolve( pa_ifsd, pG_r )
@@ -770,7 +938,9 @@ CONTAINS
       !
       REAL(wp), ALLOCATABLE, DIMENSION(:) ::   zlims   ! floe size category limits
       !
-      INTEGER ::   ierr   ! allocate status return value
+      REAL(wp) ::   zfloe_aweld     ! area of two welded floes (for computing floe_iweld)
+      INTEGER  ::   jf1, jf2, jf3   ! dummy loop indices
+      INTEGER  ::   ierr            ! allocate status return value
       !
       !!-------------------------------------------------------------------
 
@@ -825,16 +995,11 @@ CONTAINS
             &          'for specified value of nn_nfsd')
       ENDIF
 
-      ALLOCATE(floe_rl(nn_nfsd),   &
-         &     floe_ru(nn_nfsd),   &
-         &     floe_rc(nn_nfsd),   &
-         &     floe_dr(nn_nfsd),   &
-         &     floe_ac(nn_nfsd),   &
-         &     STAT=ierr)
+      ALLOCATE(floe_rl(nn_nfsd), floe_rc(nn_nfsd), floe_ru(nn_nfsd), floe_dr(nn_nfsd),   &
+         &     floe_al(nn_nfsd), floe_ac(nn_nfsd), floe_au(nn_nfsd),                     &
+         &     floe_iweld(nn_nfsd, nn_nfsd), STAT=ierr)
 
-      IF (ierr /= 0) THEN
-         CALL ctl_stop('fsd_init_bounds: could not allocate arrays')
-      ENDIF
+      IF (ierr /= 0) CALL ctl_stop('fsd_init_bounds: could not allocate FSD radii/area arrays')
 
       floe_rl = zlims(1:nn_nfsd)
       floe_ru = zlims(2:nn_nfsd+1)
@@ -842,7 +1007,33 @@ CONTAINS
 
       floe_dr = floe_ru - floe_rl
 
+      floe_al = 4._wp * rn_floeshape * floe_rl ** 2
       floe_ac = 4._wp * rn_floeshape * floe_rc ** 2
+      floe_au = 4._wp * rn_floeshape * floe_ru ** 2
+
+      ! --- Calculate floe welding array, floe_iweld
+      ! floe_iweld(jf1,jf2) = index of FSD category that floes in category jf1,
+      ! when welded with floes in category jf2, subsequently belong to
+      !
+      floe_iweld(:,:) = 0   ! 'missing' value (if no category for welding)
+      !
+      DO jf1 = 1, nn_nfsd
+         DO jf2 = 1, nn_nfsd
+            !
+            ! --- If floes from centers of cat jf1 and jf2 weld, their new area is:
+            zfloe_aweld = floe_ac(jf1) + floe_ac(jf2)
+            !
+            ! --- Find FSD category that fits into
+            !     Check each floe size category; only one can be true:
+            DO jf3 = 1, nn_nfsd-1
+               IF( (zfloe_aweld >= floe_al(jf3)) .and. (zfloe_aweld < floe_au(jf3))) THEN
+                  floe_iweld(jf1,jf2) = jf3
+               ENDIF
+            ENDDO
+            ! --- Separate check for largest category:
+            IF( zfloe_aweld >= floe_al(nn_nfsd)) floe_iweld(jf1,jf2) = nn_nfsd
+         ENDDO
+      ENDDO
 
       IF (ALLOCATED(zlims)) DEALLOCATE(zlims)
 
@@ -986,7 +1177,8 @@ CONTAINS
       INTEGER ::   jf            ! Local loop index for FSD categories
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
-      NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape, nn_fsd_ini, rn_fsd_ini_alpha
+      NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape, nn_fsd_ini, rn_fsd_ini_alpha,   &
+         &             rn_fsd_amin_weld, rn_fsd_c_weld
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namfsd)
@@ -1003,6 +1195,8 @@ CONTAINS
          WRITE(numout,*) '         Floe shape parameter                              rn_floeshape = ', rn_floeshape
          WRITE(numout,*) '         FSD initialisation case                             nn_fsd_ini = ', nn_fsd_ini
          WRITE(numout,*) '            Power law exponent (nn_fsd_ini = 2 only)   rn_fsd_ini_alpha = ', rn_fsd_ini_alpha
+         WRITE(numout,*) '         Floe welding minimum sea ice concentration    rn_fsd_amin_weld = ', rn_fsd_amin_weld
+         WRITE(numout,*) '         Floe welding coefficient                         rn_fsd_c_weld = ', rn_fsd_c_weld
       ENDIF
 
       IF(ln_fsd) THEN

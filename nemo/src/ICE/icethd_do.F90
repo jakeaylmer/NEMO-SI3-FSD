@@ -25,8 +25,9 @@ MODULE icethd_do
    USE icectl         ! sea-ice: conservation
    USE icevar  , ONLY : ice_var_vremap
    USE icethd_sal     ! sea-ice: salinity profiles
-   USE icefsd  , ONLY : ice_fsd_partition_newice, ice_fsd_add_newice, &
-      &                 ice_fsd_thd_evolve, a_ifsd, a_ifsd_2d
+   USE icefsd  , ONLY : ice_fsd_partition_newice, ice_fsd_add_newice,   &
+      &                 ice_fsd_thd_evolve      , ice_fsd_welding   ,   &
+      &                 a_ifsd, a_ifsd_2d
    USE in_out_manager ! I/O manager
    USE lib_mpp        ! MPP library
    USE timing         ! Timing
@@ -352,7 +353,7 @@ CONTAINS
                ENDIF
             ENDDO
 
-            ! --- bottom ice growth + ice enthalpy remapping --- !
+            ! --- bottom ice growth + ice enthalpy remapping + FSD floe welding --- !
             DO jl = 1, jpl
                
                ! for remapping
@@ -384,6 +385,9 @@ CONTAINS
                ! --- Ice enthalpy and salt remapping --- !
                                       CALL ice_var_vremap( zh_i_old, ze_i_old, e_i_2d  (ii,:,jl) ) 
                IF( nn_icesal == 4 )   CALL ice_var_vremap( zh_i_old, zs_i_old, szv_i_2d(ii,:,jl) ) 
+
+               ! --- Floe welding (only changes FSD) --- !
+               IF( ln_fsd ) CALL ice_fsd_welding( a_ifsd_2d(ii,:,jl), a_i_2d(ii,jl) )
                !
             END DO
             
