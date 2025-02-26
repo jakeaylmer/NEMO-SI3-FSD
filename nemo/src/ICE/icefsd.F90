@@ -26,6 +26,7 @@ MODULE icefsd
 
    PUBLIC ::   ice_fsd_init               ! routine called by ice_stp
    PUBLIC ::   ice_fsd_wri                ! routine called by ice_stp
+   PUBLIC ::   ice_fsd_restoring          ! routine called by ice_stp
    PUBLIC ::   ice_fsd_cleanup            ! routine called by ice_dyn_adv_pra
    PUBLIC ::   ice_fsd_partition_newice   ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_add_newice         ! routine called by ice_thd_do
@@ -37,9 +38,10 @@ MODULE icefsd
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rc      !: FSD floe radii, centre       of categories (m)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ru      !: FSD floe radii, upper bounds of categories (m)
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_dr      !: FSD category widths (m)
-   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_al      !: FSD floe areas, floes of radii floe rl (m2)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_al      !: FSD floe areas, floes of radii floe_rl (m2)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ac      !: FSD floe areas, floes of radii floe_rc (m2)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_au      !: FSD floe areas, floes of radii floe_ru (m2)
+   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_dlog_rc !: FSD cat. centre spacing in log(radius) space
    INTEGER ,         ALLOCATABLE, DIMENSION(:,:) :: floe_iweld   !: index of FSD cat. two given FSD cats. can weld to
 
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   a_ifsd      !: FSD per ice thickness category
@@ -49,6 +51,7 @@ MODULE icefsd
    ! ** namelist (namfsd) **
    INTEGER  ::   nn_fsd_ini         ! FSD init. options (0 = none; 1 = all in largest FSD cat; 2 = imposed power law)
    REAL(wp) ::   rn_fsd_ini_alpha   ! Parameter used for power law initial FSD with nn_icefsd_ini = 2 only
+   REAL(wp) ::   rn_fsd_t_restore   ! FSD restoring timescale [s]
    REAL(wp) ::   rn_fsd_amin_weld   ! Minimum concentration required for floe welding to take effect
    REAL(wp) ::   rn_fsd_c_weld      ! Floe welding coefficient [m-2.s-1]
 
@@ -57,6 +60,76 @@ MODULE icefsd
 #  include "read_nml_substitute.h90"
 
 CONTAINS
+
+
+   SUBROUTINE ice_fsd_restoring
+      !!-------------------------------------------------------------------
+      !!                 ***  ROUTINE ice_fsd_restoring  ***
+      !!
+      !! ** Purpose :   Apply restoring to the FSD, shifting floes from larger
+      !!                to smaller floe size categories with specified restoring
+      !!                timescale.
+      !!
+      !! ** Method  :   Wherever the FSD f(r) satisfies:
+      !!
+      !!                (log(f(r+1)) - log(f(r))) / (log(r+1) - log(r)) > 0,
+      !!
+      !!                shift area fraction of floes in r+1 category into r
+      !!                category at a rate with a restoring time scale
+      !!                rn_fsd_t_restore (set in namelist).
+      !!
+      !!                The right hand side corresponds to a power law
+      !!                distribution in number-density FSD space with exponent
+      !!                -2 (transforming to area FSD space yields an extra
+      !!                factor of two which cancels). See Bateson et al. (2022)
+      !!                for theory.
+      !!
+      !! ** References
+      !!    ----------
+      !!    Bateson, A. W., Feltham, D. L., Schroeder, D. L., Wang, Y., Hwang, B., Ridley, J. K., & Aksenov, Y. (2022).
+      !!              Sea ice floe size: its impact on pan-Arctic and local ice mass and required model complexity.
+      !!              The Cryosphere, 16, 2565-2593.
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp), PARAMETER ::   zlogfsd_grad_target = 0._wp   ! log(FSD) gradient to restore toward
+      !
+      REAL(wp) ::   zlogfsd_grad     ! FSD forward-in-space gradient in log space
+      INTEGER  ::   ji, jj, jl, jf   ! dummy loop indices
+      !
+      !!-------------------------------------------------------------------
+
+      DO jl = 1, jpl
+         DO_2D( 0, 0, 0, 0 )
+            !
+            IF( (a_i(ji,jj,jl) > epsi10) .and. (ALL(a_ifsd(ji,jj,:,jl) > epsi10)) ) THEN
+               DO jf = 1, nn_nfsd-1
+                  !
+                  ! --- Calculate forward-in-space gradient in log-space
+                  !
+                  zlogfsd_grad = ( LOG(a_ifsd(ji,jj,jf+1,jl)) - LOG(a_ifsd(ji,jj,jf,jl)) )   &
+                     &           / floe_dlog_rc(jf)
+                  !
+                  ! --- If gradient is too large, break up some larger floes into
+                  !     smaller floes [transfer area from larger to smaller category;
+                  !     note fraction added to smaller category = that removed from
+                  !     larger category (done afterwards)]
+                  !
+                  IF ( zlogfsd_grad > zlogfsd_grad_target ) THEN
+                     !
+                     a_ifsd(ji,jj,jf,  jl) = a_ifsd(ji,jj,jf,jl) + rDt_ice * a_ifsd(ji,jj,jf+1,jl) / rn_fsd_t_restore
+                     a_ifsd(ji,jj,jf+1,jl) = a_ifsd(ji,jj,jf+1,jl) * (1._wp - rDt_ice / rn_fsd_t_restore)
+                     !
+                  ENDIF
+                  !
+               ENDDO
+            ENDIF
+            !
+            CALL fsd_cleanup( a_ifsd(ji,jj,:,jl) )
+            !
+         END_2D
+      ENDDO
+
+   END SUBROUTINE ice_fsd_restoring
 
 
    SUBROUTINE ice_fsd_partition_newice( ki, pv_newice, pv_latgro, pda_latgro )
@@ -997,7 +1070,7 @@ CONTAINS
 
       ALLOCATE(floe_rl(nn_nfsd), floe_rc(nn_nfsd), floe_ru(nn_nfsd), floe_dr(nn_nfsd),   &
          &     floe_al(nn_nfsd), floe_ac(nn_nfsd), floe_au(nn_nfsd),                     &
-         &     floe_iweld(nn_nfsd, nn_nfsd), STAT=ierr)
+         &     floe_dlog_rc(nn_nfsd-1), floe_iweld(nn_nfsd, nn_nfsd), STAT=ierr)
 
       IF (ierr /= 0) CALL ctl_stop('fsd_init_bounds: could not allocate FSD radii/area arrays')
 
@@ -1033,6 +1106,14 @@ CONTAINS
             ! --- Separate check for largest category:
             IF( zfloe_aweld >= floe_al(nn_nfsd)) floe_iweld(jf1,jf2) = nn_nfsd
          ENDDO
+      ENDDO
+
+      ! --- Calculate category spacing in log(r) space (for FSD restoring routine)
+      !
+      floe_dlog_rc(:) = 0._wp   ! initialise
+      !
+      DO jf1 = 1, nn_nfsd-1
+         floe_dlog_rc(jf1) = LOG(floe_rc(jf1+1)) - LOG(floe_rc(jf1))
       ENDDO
 
       IF (ALLOCATED(zlims)) DEALLOCATE(zlims)
@@ -1178,7 +1259,7 @@ CONTAINS
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
       NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape, nn_fsd_ini, rn_fsd_ini_alpha,   &
-         &             rn_fsd_amin_weld, rn_fsd_c_weld
+         &             rn_fsd_amin_weld, rn_fsd_c_weld, rn_fsd_t_restore
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namfsd)
@@ -1197,6 +1278,7 @@ CONTAINS
          WRITE(numout,*) '            Power law exponent (nn_fsd_ini = 2 only)   rn_fsd_ini_alpha = ', rn_fsd_ini_alpha
          WRITE(numout,*) '         Floe welding minimum sea ice concentration    rn_fsd_amin_weld = ', rn_fsd_amin_weld
          WRITE(numout,*) '         Floe welding coefficient                         rn_fsd_c_weld = ', rn_fsd_c_weld
+         WRITE(numout,*) '         FSD restoring (brittle fracture) time scale   rn_fsd_t_restore = ', rn_fsd_t_restore
       ENDIF
 
       IF(ln_fsd) THEN

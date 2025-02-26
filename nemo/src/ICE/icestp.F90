@@ -168,6 +168,8 @@ CONTAINS
          !         
                                         CALL diag_trends( 1 )         ! record dyn trends
          !
+         IF( ln_fsd )                   CALL ice_fsd_restoring        ! Floe size distribution
+         !
          !-----------------------------!
          ! --- Thermodynamics BDY  --- !
          !-----------------------------!
