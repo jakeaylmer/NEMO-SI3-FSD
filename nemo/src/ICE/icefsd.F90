@@ -890,18 +890,57 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      INTEGER, INTENT(in) ::   kt        ! time step (not used?)
+      INTEGER, INTENT(in) ::   kt                    ! ocean time step index
       !
       REAL(wp), DIMENSION(A2D(0))     ::   zleff_t   ! effective floe size, grid cell
       REAL(wp), DIMENSION(A2D(0))     ::   zmsk00    ! 0% conc. mask, grid cell
       REAL(wp), DIMENSION(A2D(0),jpl) ::   zleff     ! effective floe size, each ITD category
       REAL(wp), DIMENSION(A2D(0),jpl) ::   zmsk00c   ! 0% conc. mask, each ITD category
       !
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd,jpl) :: zmsk00fc     ! 0% conc. mask, each ITD and FSD category
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zmsk00f      ! 0% conc. mask, each FSD category
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zat_ifsd     ! FSD integrated over ITD
+      INTEGER                                 :: ji, jj, jf   ! dummy loop indices
+      !
       !!-------------------------------------------------------------------
 
-      ! Copied from ice_wri generic subroutine; thresholds for outputs:
+      ! --- Calculate sea ice threshold masks for outputs (as in subroutine ice_wri)
       zmsk00 (:,:)   = MERGE( 1._wp, 0._wp, at_i(A2D(0))  >= epsi06  )
       zmsk00c(:,:,:) = MERGE( 1._wp, 0._wp, a_i(A2D(0),:) >= epsi06  )
+
+      ! --- Analogous masks including FSD dimension
+      DO jf = 1, nn_nfsd
+         zmsk00f (:,:,jf)   = MERGE( 1._wp, 0._wp, at_i(A2D(0))  >= epsi06 )
+         zmsk00fc(:,:,jf,:) = MERGE( 1._wp, 0._wp, a_i(A2D(0),:) >= epsi06 )
+      ENDDO
+
+      ! --- Write constant fields to output
+      IF ( kt == nit000 ) THEN
+         IF (iom_use( 'icefsd_rl' )) CALL iom_put( 'icefsd_rl' , floe_rl(:) )
+         IF (iom_use( 'icefsd_rc' )) CALL iom_put( 'icefsd_rc' , floe_rc(:) )
+         IF (iom_use( 'icefsd_ru' )) CALL iom_put( 'icefsd_ru' , floe_ru(:) )
+         IF (iom_use( 'icefsd_al' )) CALL iom_put( 'icefsd_al' , floe_al(:) )
+         IF (iom_use( 'icefsd_ac' )) CALL iom_put( 'icefsd_ac' , floe_ac(:) )
+         IF (iom_use( 'icefsd_au' )) CALL iom_put( 'icefsd_au' , floe_au(:) )
+         IF (iom_use( 'icefsd_dr' )) CALL iom_put( 'icefsd_dr' , floe_dr(:) )
+      ENDIF
+
+      ! --- Write FSD per ITD category --> 4d array (5d including time)
+      IF (iom_use( 'icefsd_cat' )) CALL iom_put( 'icefsd_cat', a_ifsd(A2D(0),:,:) * zmsk00fc )
+
+      ! --- Calculate and write FSD integrated over ITD categories
+      !     --> 3d array (4d including time)
+      IF (iom_use( 'icefsd' )) THEN
+         !
+         DO jf = 1, nn_nfsd
+            DO_2D(0, 0, 0, 0)
+               zat_ifsd(ji,jj,jf) = SUM( a_ifsd(ji,jj,jf,:) * a_i(ji,jj,:) )
+            END_2D
+         ENDDO
+         !
+         CALL iom_put( 'icefsd', zat_ifsd(A2D(0),:) * zmsk00f )
+         !
+      ENDIF
 
       ! Effective floe size (per ITD category and/or for grid cell)
       ! 

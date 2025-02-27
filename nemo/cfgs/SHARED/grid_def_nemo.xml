@@ -35,6 +35,30 @@
     <axis axis_ref="ncatice" />
   </grid>
   <!--  -->
+  <grid id="grid_fsd" >
+    <axis axis_ref="nfsdice"/>
+  </grid>
+  <!--  -->
+  <grid id="grid_T_fsd" >
+    <domain domain_ref="grid_T" />
+    <axis axis_ref="nfsdice" />
+  </grid>
+  <grid id="grid_T_fsd_inner" >
+    <domain domain_ref="grid_T_inner" name="grid_T" /> <!-- use name="grid_T" so we don't duplicate x, y, dimensions -->
+    <axis axis_ref="nfsdice" />
+  </grid>
+  <!--  -->
+  <grid id="grid_T_nfsdice" >
+    <domain domain_ref="grid_T" />
+    <axis axis_ref="nfsdice" />
+    <axis axis_ref="ncatice" />
+  </grid>
+  <grid id="grid_T_nfsdice_inner" >
+    <domain domain_ref="grid_T_inner" name="grid_T" /> <!-- use name="grid_T" so we don't duplicate x, y, dimensions -->
+    <axis axis_ref="nfsdice" />
+    <axis axis_ref="ncatice" />
+  </grid>
+  <!--  -->
   <grid id="grid_T_icbbas" >
     <domain domain_ref="grid_T" />
     <axis axis_ref="icbbas" />

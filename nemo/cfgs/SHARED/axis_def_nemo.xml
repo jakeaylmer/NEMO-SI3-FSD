@@ -18,6 +18,7 @@
   <axis id="icbbas"  long_name="Iceberg basin"      unit="1"                 />
   <axis id="ncatice" long_name="Ice category"       unit="1"                 />
   <axis id="nlayice" long_name="Ice layer"          unit="1"                 />
+  <axis id="nfsdice" long_name="Ice floe size category" unit="1"             />
   <axis id="iax_20C" long_name="20 degC isotherm"   unit="degC"              />
   <axis id="iax_26C" long_name="26 degC isotherm"   unit="degC"              />
   <axis id="iax_28C" long_name="28 degC isotherm"   unit="degC"              />

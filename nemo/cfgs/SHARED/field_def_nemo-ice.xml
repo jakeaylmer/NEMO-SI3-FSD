@@ -376,6 +376,36 @@ standard_name="rft_loss"                                 unit="1/s"  />
       
     </field_group> <!-- SBC_4D -->    
     
+    <!-- FSD categories -->
+    <field_group id="FSD_3D" grid_ref="grid_T_fsd_inner" >
+
+      <field id="icefsd"          long_name="Sea ice floe size distribution"                           unit="1" />
+
+    </field_group> <!-- FSD_3D -->
+
+    <!-- FSD + ITD categories -->
+    <field_group id="FSD_4D" grid_ref="grid_T_nfsdice_inner" >
+
+      <field id="icefsd_cat"      long_name="Sea ice floe size distribution in thickness categories"   unit="1" />
+
+    </field_group> <!-- FSD_4D -->
+
+    <!-- FSD constant fields -->
+    <field_group id="FSD_constant_fields" grid_ref="grid_fsd" operation="once">
+
+      <!-- category radii -->
+      <field id="icefsd_rl"       long_name="Sea ice floe size distribution category radius, lower bound"         unit="m"  />
+      <field id="icefsd_rc"       long_name="Sea ice floe size distribution category radius, center of bounds"    unit="m"  />
+      <field id="icefsd_ru"       long_name="Sea ice floe size distribution category radius, upper bound"         unit="m"  />
+      <field id="icefsd_dr"       long_name="Sea ice floe size distribution category widths (radius)"             unit="m"  />
+
+      <!-- category areas -->
+      <field id="icefsd_al"       long_name="Sea ice floe size distribution category areas at lower bound"        unit="m2" />
+      <field id="icefsd_ac"       long_name="Sea ice floe size distribution category areas at center of bounds"   unit="m2" />
+      <field id="icefsd_au"       long_name="Sea ice floe size distribution category areas at upper bound"        unit="m2" />
+
+    </field_group> <!-- FSD constant fields -->
+
     <!-- scalar variables -->
     <field_group id="SBC_scalar"  grid_ref="grid_scalar" >
       <field id="NH_iceextt"      long_name="Sea ice extent North"                   standard_name="sea_ice_extent_n"                   unit="1e6_km2"  />
