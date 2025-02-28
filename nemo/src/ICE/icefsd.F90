@@ -559,6 +559,11 @@ CONTAINS
       !!                                   point and for one thickness category
       !!                pG_r             : lateral growth/melt rate in m/s
       !!
+      !! ** Note    :   This routine does not implement creation of new ice area or
+      !!                loss of ice area due to complete melt of existing floes. Those
+      !!                do affect the FSD but are handled in the separate routines
+      !!                ice_fsd_add_newice and (indirectly) ice_thd_da.
+      !!
       !! ** References
       !!    ----------
       !!    Horvat, C., & Tziperman, E. (2015).
@@ -636,7 +641,14 @@ CONTAINS
                   &             - (pa_ifsd(jf  ) / floe_dr(jf  ) ) )
             ENDDO
 
-            ! Smallest category: no 'floe flux' leaving this category:
+            ! Smallest category: there is a 'floe flux' leaving this category,
+            ! but it represents complete melt of smallest floes and results in
+            ! ice area loss. So that flux, which would be pa_ifsd(1) / floe_dr(1),
+            ! is not here because this routine is just shifting ice between floe
+            ! size categories, but the term appears directly in routine ice_thd_da.
+            !
+            ! Meanwhile, here we just have the 'floe flux' from category 2:
+            !
             zdiv_fsd(1) = pa_ifsd(2) / floe_dr(2)
 
             ! Largest category: no 'floe flux' from larger category:

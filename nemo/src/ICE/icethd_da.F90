@@ -17,7 +17,7 @@ MODULE icethd_da
    USE par_ice        ! SI3 parameters
    USE phycst  , ONLY : rpi, rt0, rhoi, rhos
    USE ice1D          ! sea-ice: thermodynamics variables
-   USE icefsd  , ONLY : fsd_peri_dens, ice_fsd_thd_evolve, a_ifsd_1d
+   USE icefsd  , ONLY : fsd_peri_dens, ice_fsd_thd_evolve, a_ifsd_1d, floe_dr
    !
    USE in_out_manager , ONLY : numnam_ice_ref, numnam_ice_cfg, numout, numoni, lwp, lwm  ! I/O manager
    USE lib_mpp        , ONLY : ctl_stop, ctl_warn, ctl_nam                               ! MPP library
@@ -113,7 +113,7 @@ CONTAINS
       !!              Phil. Trans. R. Soc. A, 373(2052), 20140167.
       !!---------------------------------------------------------------------
       INTEGER  ::   ji, jf     ! dummy loop indices
-      REAL(wp)            ::   zastar, zdfloe, zperi, zwlat, zda, zda_tot, zG_r
+      REAL(wp)            ::   zastar, zdfloe, zperi, zwlat, zda, zda_tot
       REAL(wp), PARAMETER ::   zdmax = 300._wp
       REAL(wp), PARAMETER ::   zcs   = 0.66_wp
       REAL(wp), PARAMETER ::   zm1   = 3.e-6_wp
@@ -133,21 +133,23 @@ CONTAINS
          !
          IF( ln_fsd ) THEN
             ! --- Calculate reduction of sea ice concentration (category)
-            !     using perimeter density from floe size distribution.
-            !     Note FSD perimeter density is per unit sea ice area,
-            !     multiply by sea ice concentration here to get per unit
-            !     ocean area as required.
+            !     using perimeter density from floe size distribution, P_FSD.
+            !     Note P_FSD returned by fsd_peri_dens() is per unit sea ice area;
+            !     multiplying by sea ice concentration gives per unit ocean area as
+            !     required here. Then, in notation from docs above:
             !
-            zperi = a_i_1d(ji) * fsd_peri_dens( a_ifsd_1d(ji,:) )
+            !     dA/dt = -W * A * ( P_FSD + FSD(1)/dr(1) )
             !
-            zda = zwlat * zperi * rDt_ice
+            !     where the second term FSD(1)/dr(1) accounts for loss of ice area from
+            !     smallest floe size category due to complete melt of smallest floes
+            !     (first term gives change in A due to existing floes shrinking only).
+            !     It comes from the divergence term in the tendency of FSD due to
+            !     thermodynamics (see ice_fsd_thd_evolve/docs).
             !
-            IF( zda > a_i_1d(ji) ) THEN
-               zda = a_i_1d(ji)
-               zG_r = -zda / (zperi * rDt_ice)
-            ELSE
-               zG_r = -zwlat
-            ENDIF
+            !     Check with MIN() here should not be needed, but it does not hurt:
+            !
+            zda = MIN( zwlat * rDt_ice * a_i_1d(ji) * (fsd_peri_dens( a_ifsd_1d(ji,:) ) + a_ifsd_1d(ji,1)/floe_dr(1)),  &
+               &       a_i_1d(ji) )
             !
          ELSE
             ! --- Calculate reduction of total sea ice concentration --- !
@@ -181,7 +183,7 @@ CONTAINS
             a_i_1d(ji) = a_i_1d(ji) - zda
 
             ! update floe size distribution
-            IF( ln_fsd ) CALL ice_fsd_thd_evolve( a_ifsd_1d(ji,:), zG_r )
+            IF( ln_fsd ) CALL ice_fsd_thd_evolve( a_ifsd_1d(ji,:), -zwlat )
 
             ! ensure that h_i = 0 where a_i = 0
             IF( a_i_1d(ji) == 0._wp ) THEN
