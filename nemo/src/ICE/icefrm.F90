@@ -4,13 +4,15 @@ MODULE icefrm
    !! Sea-ice form drag param from CICE
    !!======================================================================
    !! History :  4.2        ! 2023  (D. Schroeder)       Form drag from CICE5
+   !!            5.0        ! 2025  (J.R. Aylmer)        Add FSD dependence
    !!----------------------------------------------------------------------
 #if defined key_si3
    !!----------------------------------------------------------------------
    !!   'key_si3'                                       SI3 sea-ice model
    !!----------------------------------------------------------------------
    USE par_ice
-   USE ice   , ONLY : at_i, at_ip, vt_i, vt_s, drag_io, drag_ia                ! sea-ice variables
+   USE ice   , ONLY : a_i, at_i, at_ip, vt_i, vt_s, drag_io, drag_ia           ! sea-ice variables
+   USE icefsd, ONLY : a_ifsd, fsd_peri_dens                                    ! floe size distribution
    USE in_out_manager       ! I/O manager
    USE iom                  ! for iom_put
    USE timing               ! timing
@@ -46,7 +48,7 @@ CONTAINS
       !!----------------------------------------------------------------------
       INTEGER, INTENT(in) ::   kt   ! ocean time-step index
       !
-      INTEGER ::   ji, jj           ! dummy loop indices
+      INTEGER ::   ji, jj, jf       ! dummy loop indices
       !
       ! Sail/keel parameters    
       REAL(wp), PARAMETER :: zazlpha   = 0._wp       ! weight functions for area of ridged ice 
@@ -104,6 +106,8 @@ CONTAINS
       REAL(wp), PARAMETER ::   zvrdgi  = -0.059959_wp ! parameter used to estimate vrdg value (intercept)
       REAL(wp), PARAMETER ::   zvrdgi1 =  0.501150_wp ! parameter used to estimate vrdg value (first degree)
       REAL(wp), PARAMETER ::   zvrdgi2 =  0.077504_wp ! parameter used to estimate vrdg value (second degree)
+      !
+      REAL(wp), DIMENSION(nn_nfsd) ::   zfsdi ! FSD integrated over ITD and normalised to ice area
       !
       REAL(wp), DIMENSION(A2D(nn_hls)) ::   zardg_drag    ! ridged ice concentration
       REAL(wp), DIMENSION(A2D(nn_hls)) ::   zvrdg_drag    ! ridged ice thickness
@@ -177,8 +181,28 @@ CONTAINS
             zai   = at_i (ji,jj)
             z1_ai = 1._wp / zai
             
-            ! floe size parameterization see Eq. 13
-            zlfloe = zLmin * ( zastar / ( zastar - zai ) ) ** zbeta
+            IF( ln_fsd ) THEN
+               !
+               ! Calculate 'effective floe size' from FSD integrated over ITD and normalised
+               ! to sea ice area, zfsdi. This replaces zlfloe without needing to change
+               ! other parts of calculation, such that (zai / zlfloe) correctly gives the
+               ! total cross-wind (or cross-current) floe edge per unit domain area in
+               ! either case; see Tsamados et al. (2014) and docs for details.
+               !
+               ! Note: changing FSD floe shape parameter (rn_floe_shape) will not correctly
+               ! modify form drag due to floe edges since default Lupkes et al. (2012)
+               ! formulation includes shape factor absorbed into coefficients (namelist
+               ! parameters rn_Cf_i{a,o}), so cannot easily be accounted for at present.
+               !
+               DO jf = 1, nn_nfsd
+                  zfsdi(jf) = SUM( a_ifsd(ji,jj,jf,:) * a_i(ji,jj,:) ) / zai
+               ENDDO
+               zlfloe = 4._wp / fsd_peri_dens( zfsdi )  ! gives effective floe size
+            ELSE
+               ! Original non-FSD implementation
+               ! floe size parameterization see Eq. 13
+               zlfloe = zLmin * ( zastar / ( zastar - zai ) ) ** zbeta
+            ENDIF
 
             ! pond length
             zlpond = zlpmin * ( 1._wp - zaip ) + zlpmax * zaip
