@@ -48,12 +48,12 @@
     <axis axis_ref="nfsdice" />
   </grid>
   <!--  -->
-  <grid id="grid_T_nfsdice" >
+  <grid id="grid_T_fstd" >
     <domain domain_ref="grid_T" />
     <axis axis_ref="nfsdice" />
     <axis axis_ref="ncatice" />
   </grid>
-  <grid id="grid_T_nfsdice_inner" >
+  <grid id="grid_T_fstd_inner" >
     <domain domain_ref="grid_T_inner" name="grid_T" /> <!-- use name="grid_T" so we don't duplicate x, y, dimensions -->
     <axis axis_ref="nfsdice" />
     <axis axis_ref="ncatice" />

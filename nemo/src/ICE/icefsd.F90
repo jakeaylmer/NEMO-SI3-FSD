@@ -757,9 +757,9 @@ CONTAINS
    END FUNCTION rDt_ice_fsd
 
 
-   FUNCTION fsd_peri_dens( pa_ifsd )
+   FUNCTION fsd_peri_dens( pfsd )
       !!-------------------------------------------------------------------
-      !!                   *** ROUTINE ice_fsd_peri ***
+      !!                   *** FUNCTION ice_fsd_peri ***
       !!
       !! ** Purpose :   Calculate floe perimeter density from floe size
       !!                distribution
@@ -772,12 +772,10 @@ CONTAINS
       !! ** Note    :  Perimeter density is the total perimeter of an
       !!               ensemble of floes divided by the total sea ice area
       !!               (Bateson et al. 2022). Multiply result by sea ice
-      !!               concentation to get floe perimeter per unit ocean
-      !!               area.
+      !!               concentation to get floe perimeter per unit ocean area.
       !!
-      !! ** Input   :  pa_ifsd(nn_nfsd) : floe size distribution. Can be for one
-      !!               ice thickness category [e.g., a_ifsd(ji,jj,:,jl) ] or for
-      !!               all ice [e.g., sum over jl of a_i(ji,jj,jl) * a_ifsd(ji,jj,:,jl)].
+      !! ** Input   :  pfsd(nn_nfsd) : floe size distribution normalised to
+      !!                               sea ice area (at one location).
       !!
       !! ** Output  :  Perimeter density [m.m-2]
       !!
@@ -789,7 +787,7 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp), DIMENSION(nn_nfsd), INTENT(in)  ::   pa_ifsd   ! floe size distribution
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(in)  ::   pfsd   ! floe size distribution
       REAL(wp)  :: fsd_peri_dens
       !
       INTEGER ::   jf   ! dummy loop index
@@ -799,96 +797,10 @@ CONTAINS
       fsd_peri_dens = 0._wp   ! initialise
 
       DO jf = 1, nn_nfsd
-         fsd_peri_dens = fsd_peri_dens + 2._wp * pa_ifsd(jf) / floe_rc(jf)
+         fsd_peri_dens = fsd_peri_dens + 2._wp * pfsd(jf) / floe_rc(jf)
       ENDDO
 
    END FUNCTION fsd_peri_dens
-
-
-   FUNCTION fsd_leff_cat()
-      !!-------------------------------------------------------------------
-      !!                 ***  ROUTINE fsd_leff_cat  ***
-      !!
-      !! ** Purpose :   Calculates the effective floe size (diameter) per ice
-      !!                thickness category.
-      !!
-      !! ** Method  :   Effective floe size (diameter) per ITD category is:
-      !! 
-      !!                   2 / integral[ (1/r) * L(r,h) * dr ]
-      !!
-      !!                where r is floe size (radius), L(r,h) is the modified-
-      !!                areal FSTD, i.e., L(r,h)*dr = a_ifsd, and integral is
-      !!                over all floe sizes (Bateson et al., 2022, Cryosphere,
-      !!                doi:10.5194/tc-16-2565-2022)
-      !!-------------------------------------------------------------------
-      !
-      REAL(wp), DIMENSION(A2D(0),jpl) ::   fsd_leff_cat   ! effective floe size in each thickness cat.
-      !
-      INTEGER ::   ji, jj, jl, jf   ! dummy variables for loop indices
-      !
-      !!-------------------------------------------------------------------
-
-      fsd_leff_cat(:,:,:) = 0._wp   ! initial value
-
-      DO jl = 1, jpl
-         DO_2D( 0, 0, 0, 0 )
-
-            ! Integral over floe categories [use radius at category centres
-            ! and note that a_ifsd corresponds to L(r,h)*dr]:
-            DO jf = 1, nn_nfsd
-               fsd_leff_cat(ji,jj,jl) = fsd_leff_cat(ji,jj,jl)               &
-                  &                     + a_ifsd(ji,jj,jf,jl) / floe_rc(jf)
-            ENDDO
-
-            ! 2.0 divided by above integral, except where integral is zero
-            ! (or effectively zero):
-            IF (fsd_leff_cat(ji,jj,jl) >= epsi06) THEN
-               fsd_leff_cat(ji,jj,jl) = 2._wp / fsd_leff_cat(ji,jj,jl)
-            ELSE
-               fsd_leff_cat(ji,jj,jl) = 0._wp
-            ENDIF
-
-         END_2D
-      ENDDO
-
-   END FUNCTION fsd_leff_cat
-
-
-   FUNCTION fsd_leff(p_leff_per_cat)
-      !!-------------------------------------------------------------------
-      !!                 ***  ROUTINE fsd_leff  ***
-      !!
-      !! ** Purpose :   Calculates the effective floe size (diameter) per
-      !!                grid cell
-      !!
-      !! ** Method  :   Area-weighted average of effective floe size per
-      !!                ice thickness category (calculated by the function
-      !!                fsd_leff_cat(), the result of which should be input
-      !!                to the present function). See Bateson et al. (2022,
-      !!                Cryosphere, doi:10.5194/tc-16-2565-2022).
-      !!-------------------------------------------------------------------
-      !
-      REAL(wp), DIMENSION(A2D(0),jpl), INTENT(in) ::   p_leff_per_cat   ! effective floe size per thickness cat.
-      !
-      REAL(wp), DIMENSION(A2D(0)) ::   fsd_leff   ! effective floe size (diameter, m)
-      !
-      INTEGER ::   ji, jj, jl     ! dummy variables for loop indices
-      !
-      !!-------------------------------------------------------------------
-
-      fsd_leff(:,:) = 0._wp   ! initial value
-
-      DO_2D( 0, 0, 0, 0 )
-         ! Only calculate if ice is present (at_i > 0), otherwise leave as 0:
-         IF (at_i(ji,jj) >= epsi06) THEN
-            DO jl = 1, jpl
-               fsd_leff(ji,jj) = fsd_leff(ji,jj)   &
-                  &              + p_leff_per_cat(ji,jj,jl) * a_i(ji,jj,jl) / at_i(ji,jj)
-            ENDDO
-         ENDIF
-      END_2D
-
-   END FUNCTION fsd_leff
 
 
    SUBROUTINE ice_fsd_wri( kt )
@@ -904,15 +816,20 @@ CONTAINS
       !
       INTEGER, INTENT(in) ::   kt                    ! ocean time step index
       !
-      REAL(wp), DIMENSION(A2D(0))     ::   zleff_t   ! effective floe size, grid cell
-      REAL(wp), DIMENSION(A2D(0))     ::   zmsk00    ! 0% conc. mask, grid cell
-      REAL(wp), DIMENSION(A2D(0),jpl) ::   zleff     ! effective floe size, each ITD category
-      REAL(wp), DIMENSION(A2D(0),jpl) ::   zmsk00c   ! 0% conc. mask, each ITD category
+      REAL(wp), DIMENSION(A2D(0))     ::   zravg       ! mean floe radius, grid cell (m)
+      REAL(wp), DIMENSION(A2D(0))     ::   zperi       ! perimeter density, grid cell (m.m-2)
+      REAL(wp), DIMENSION(A2D(0))     ::   zleff       ! effective floe size, grid cell (m)
+      REAL(wp), DIMENSION(A2D(0))     ::   zmsk00      ! 0% conc. mask, grid cell
+      REAL(wp), DIMENSION(A2D(0))     ::   zmsk1_ati   ! mask = 1/at_i (ice) or 0 (no ice)
+      REAL(wp), DIMENSION(A2D(0),jpl) ::   zperi_cat   ! perimeter density, each ITD category (m.m-2)
+      REAL(wp), DIMENSION(A2D(0),jpl) ::   zleff_cat   ! effective floe size, each ITD category (m)
+      REAL(wp), DIMENSION(A2D(0),jpl) ::   zmsk00c     ! 0% conc. mask, each ITD category
       !
-      REAL(wp), DIMENSION(A2D(0),nn_nfsd,jpl) :: zmsk00fc     ! 0% conc. mask, each ITD and FSD category
-      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zmsk00f      ! 0% conc. mask, each FSD category
-      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zat_ifsd     ! FSD integrated over ITD
-      INTEGER                                 :: ji, jj, jf   ! dummy loop indices
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd,jpl) :: zmsk00fc         ! 0% conc. mask, each ITD and FSD category
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zmsk00f          ! 0% conc. mask, each FSD category
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zfsd             ! FSD integrated over ITD
+      REAL(wp), DIMENSION(A2D(0),nn_nfsd)     :: zpdd             ! Perimeter density distribution
+      INTEGER                                 :: ji, jj, jl, jf   ! dummy loop indices
       !
       !!-------------------------------------------------------------------
 
@@ -926,53 +843,64 @@ CONTAINS
          zmsk00fc(:,:,jf,:) = MERGE( 1._wp, 0._wp, a_i(A2D(0),:) >= epsi06 )
       ENDDO
 
-      ! --- Write constant fields to output
-      IF ( kt == nit000 ) THEN
-         IF (iom_use( 'icefsd_rl' )) CALL iom_put( 'icefsd_rl' , floe_rl(:) )
-         IF (iom_use( 'icefsd_rc' )) CALL iom_put( 'icefsd_rc' , floe_rc(:) )
-         IF (iom_use( 'icefsd_ru' )) CALL iom_put( 'icefsd_ru' , floe_ru(:) )
-         IF (iom_use( 'icefsd_al' )) CALL iom_put( 'icefsd_al' , floe_al(:) )
-         IF (iom_use( 'icefsd_ac' )) CALL iom_put( 'icefsd_ac' , floe_ac(:) )
-         IF (iom_use( 'icefsd_au' )) CALL iom_put( 'icefsd_au' , floe_au(:) )
-         IF (iom_use( 'icefsd_dr' )) CALL iom_put( 'icefsd_dr' , floe_dr(:) )
-      ENDIF
+      ! --- Calculate new mask = 1/at_i or 0 if at_i too small:
+      zmsk1_ati(A2D(0)) = 0._wp
+      WHERE( at_i(A2D(0)) >= epsi06 ) zmsk1_ati(A2D(0)) = 1._wp / at_i(A2D(0))
 
-      ! --- Write FSD per ITD category --> 4d array (5d including time)
-      IF (iom_use( 'icefsd_cat' )) CALL iom_put( 'icefsd_cat', a_ifsd(A2D(0),:,:) * zmsk00fc )
-
-      ! --- Calculate and write FSD integrated over ITD categories
-      !     --> 3d array (4d including time)
-      IF (iom_use( 'icefsd' )) THEN
+      ! --- Calculate outputs
+      !
+      zleff_cat(A2D(0),:) = 0._wp   ! initialise
+      zleff    (A2D(0))   = 0._wp
+      zravg    (A2D(0))   = 0._wp
+      !
+      DO_2D(0, 0, 0, 0)
+         !
+         ! FSD integrated over ITD. Note this gives F(r)dr, the area of ice in
+         ! floe size range [r, r+dr] per unit ocean area.
+         !
+         ! In this jf loop also calculate perimeter density distribution,
+         ! given by rho(r)dr = (2/r)F(r)dr/at_i.
+         !
+         ! In this jf loop also calculate mean floe radius, zravg, given by
+         ! area-weighted mean floe radius across thickness categories.
          !
          DO jf = 1, nn_nfsd
-            DO_2D(0, 0, 0, 0)
-               zat_ifsd(ji,jj,jf) = SUM( a_ifsd(ji,jj,jf,:) * a_i(ji,jj,:) )
-            END_2D
+            zfsd (ji,jj,jf) = SUM( a_ifsd(ji,jj,jf,:) * a_i(ji,jj,:) )
+            zpdd (ji,jj,jf) =      (2._wp / floe_rc(jf)) * zfsd(ji,jj,jf) * zmsk1_ati(ji,jj)
+            zravg(ji,jj)    = zravg(ji,jj) + floe_rc(jf) * zfsd(ji,jj,jf) * zmsk1_ati(ji,jj)
          ENDDO
          !
-         CALL iom_put( 'icefsd', zat_ifsd(A2D(0),:) * zmsk00f )
+         ! Perimeter density and effective floe size, per ITD category:
+         DO jl = 1, jpl
+            zperi_cat(ji,jj,jl) = fsd_peri_dens( a_ifsd(ji,jj,:,jl) )
+            IF( zperi_cat(ji,jj,jl) >= epsi06 ) zleff_cat(ji,jj,jl) = 4._wp / zperi_cat(ji,jj,jl)
+         ENDDO
          !
-      ENDIF
+         ! Perimeter density and effective floe size, for all ice,
+         ! calculated as area-weighted average of category versions:
+         zperi(ji,jj) = SUM( zperi_cat(ji,jj,:) * a_i(ji,jj,:) ) * zmsk1_ati(ji,jj)
+         zleff(ji,jj) = SUM( zleff_cat(ji,jj,:) * a_i(ji,jj,:) ) * zmsk1_ati(ji,jj)
+         !
+      END_2D
 
-      ! Effective floe size (per ITD category and/or for grid cell)
-      ! 
-      ! (even if only for grid cell is required, it is still necessary to
-      ! first calculate it per ice thickness category)
-      ! 
-      IF (iom_use( 'icefsdleff' ) .or. iom_use( 'icefsdleff_cat' )) THEN
+      ! --- Write constant fields to output (if requested, case-by-case)
+      IF(iom_use( 'icefsd_rl' )) CALL iom_put( 'icefsd_rl' , floe_rl(:) )
+      IF(iom_use( 'icefsd_rc' )) CALL iom_put( 'icefsd_rc' , floe_rc(:) )
+      IF(iom_use( 'icefsd_ru' )) CALL iom_put( 'icefsd_ru' , floe_ru(:) )
+      IF(iom_use( 'icefsd_al' )) CALL iom_put( 'icefsd_al' , floe_al(:) )
+      IF(iom_use( 'icefsd_ac' )) CALL iom_put( 'icefsd_ac' , floe_ac(:) )
+      IF(iom_use( 'icefsd_au' )) CALL iom_put( 'icefsd_au' , floe_au(:) )
+      IF(iom_use( 'icefsd_dr' )) CALL iom_put( 'icefsd_dr' , floe_dr(:) )
 
-         zleff = fsd_leff_cat()
-
-         IF (iom_use( 'icefsdleff_cat' )) THEN
-             CALL iom_put( 'icefsdleff_cat' , zleff(A2D(0),:) * zmsk00c)
-         ENDIF
-
-         IF (iom_use( 'icefsdleff' )) THEN
-            zleff_t = fsd_leff(zleff)
-            CALL iom_put( 'icefsdleff' , zleff_t(A2D(0)) * zmsk00 )
-         ENDIF
-
-      ENDIF
+      ! --- Write variable fields to output (if requested, case-by-case)
+      IF(iom_use( 'icefsd_cat'     )) CALL iom_put( 'icefsd_cat'     , a_ifsd   (A2D(0),:,:) * zmsk00fc )
+      IF(iom_use( 'icefsd'         )) CALL iom_put( 'icefsd'         , zfsd     (A2D(0),:)   * zmsk00f  )
+      IF(iom_use( 'icepdd'         )) CALL iom_put( 'icepdd'         , zpdd     (A2D(0),:)   * zmsk00f  )
+      IF(iom_use( 'icefsdperi_cat' )) CALL iom_put( 'icefsdperi_cat' , zperi_cat(A2D(0),:)   * zmsk00c  )
+      IF(iom_use( 'icefsdleff_cat' )) CALL iom_put( 'icefsdleff_cat' , zleff_cat(A2D(0),:)   * zmsk00c  )
+      IF(iom_use( 'icefsdperi'     )) CALL iom_put( 'icefsdperi'     , zperi    (A2D(0))     * zmsk00   )
+      IF(iom_use( 'icefsdleff'     )) CALL iom_put( 'icefsdleff'     , zleff    (A2D(0))     * zmsk00   )
+      IF(iom_use( 'icefsdravg'     )) CALL iom_put( 'icefsdravg'     , zravg    (A2D(0))     * zmsk00   )
 
    END SUBROUTINE ice_fsd_wri
 

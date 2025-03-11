@@ -57,7 +57,9 @@
       <field id="dvpn_drn"     long_name="pond volume tendency due to drainage"                    standard_name="sea_ice_pondvolume_tendency_drainage"      unit="kg/m2/s" />
       
       <!-- FSD -->
-      <field id="icefsdleff"     long_name="effective floe size"                                                                                             unit="m" />
+      <field id="icefsdperi"     long_name="Sea ice perimeter density (area-weighted mean over categories)"                                                  unit="m-1" />
+      <field id="icefsdleff"     long_name="Sea ice effective floe size (area-weighted mean over categories)"                                                unit="m"   />
+      <field id="icefsdravg"     long_name="Sea ice mean floe radius (area-weighted mean over categories)"                                                   unit="m"   />
       
       <!-- heat -->
       <field id="icetemp"      long_name="Mean ice temperature"                                                                                              unit="degC" detect_missing_value="true" />
@@ -347,7 +349,8 @@ standard_name="rft_loss"                                 unit="1/s"  />
       <field id="icealb_cat"   long_name="Sea-ice or snow albedo"                            unit=""        detect_missing_value="true" />
       
       <!-- FSD -->
-      <field id="icefsdleff_cat" long_name="effective floe size (per category)"              unit="m" />
+      <field id="icefsdperi_cat" long_name="Sea ice perimeter density (per category)"        unit="m-1" />
+      <field id="icefsdleff_cat" long_name="Sea ice effective floe size (per category)"      unit="m"   />
       
       <!-- Add-ons for SIMIP -->
       <field id="iceconc_cat_cmip"     long_name="Sea-ice area fractions in thickness categories"  standard_name="sea_ice_area_fraction_over_categories" detect_missing_value="true" unit=""   > iceconc_cat      * icemask_cat + $missval * (1.-icemask_cat) </field>
@@ -380,11 +383,12 @@ standard_name="rft_loss"                                 unit="1/s"  />
     <field_group id="FSD_3D" grid_ref="grid_T_fsd_inner" >
 
       <field id="icefsd"          long_name="Sea ice floe size distribution"                           unit="1" />
+      <field id="icepdd"          long_name="Sea ice perimeter density distribution"                   unit="m-1" />
 
     </field_group> <!-- FSD_3D -->
 
     <!-- FSD + ITD categories -->
-    <field_group id="FSD_4D" grid_ref="grid_T_nfsdice_inner" >
+    <field_group id="FSD_4D" grid_ref="grid_T_fstd_inner" >
 
       <field id="icefsd_cat"      long_name="Sea ice floe size distribution in thickness categories"   unit="1" />
 
