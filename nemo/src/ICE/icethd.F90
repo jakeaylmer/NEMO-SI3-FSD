@@ -190,6 +190,8 @@ CONTAINS
          &                    t_su, 'T', 1._wp, a_ip, 'T', 1._wp, v_ip, 'T', 1._wp, v_il, 'T', 1._wp )
       CALL lbc_lnk( 'icethd', e_i , 'T', 1._wp, e_s , 'T', 1._wp, szv_i , 'T', 1._wp )
       !
+      IF( ln_fsd ) CALL lbc_lnk( 'icethd', a_ifsd, 'T', 1._wp )
+      !
       at_i(:,:) = SUM( a_i, dim=3 )
       DO_2D( 0, 0, 0, 0 )                                           ! --- Ice velocity corrections
          IF( at_i(ji,jj) == 0._wp ) THEN   ! if ice has melted
