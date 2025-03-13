@@ -326,7 +326,7 @@ CONTAINS
             ! recover the correct value using za_b (a_i_2d at beginning of ice_thd_do)
             ! and zda_latgro (FSD lateral area growth per thickness category):
             !
-            IF( ln_fsd ) CALL ice_fsd_add_newice( ii, jcat, za_newice, za_b(jcat) + zda_latgro(jcat) )
+            IF( ln_fsd ) CALL ice_fsd_add_newice( a_ifsd_2d(ii,:,jcat), za_newice, za_b(jcat) + zda_latgro(jcat) )
 
             ! Heat content
             !

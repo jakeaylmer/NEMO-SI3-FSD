@@ -282,51 +282,46 @@ CONTAINS
    END SUBROUTINE ice_fsd_partition_newice
 
 
-   SUBROUTINE ice_fsd_add_newice( ki, kl, pa_newice, pa_i_before )
+   SUBROUTINE ice_fsd_add_newice( pa_ifsd, pa_newice, pa_i_before )
       !!-------------------------------------------------------------------
       !!                ***  ROUTINE ice_fsd_add_newice  ***
       !!
       !! ** Purpose :   Add new ice growth in open water (not lateral growth
       !!                of existing ice) to the floe size distribution in the
-      !!                appropriate floe size and thickness categories
+      !!                appropriate floe size category.
       !!
       !! ** Method  :   New ice is added to the smallest floe size category.
-      !!                The floe size distribution for the specified thickness
-      !!                category is updated accordingly.
       !!
-      !! ** Input   :   ki          : 1D thermodynamic array index
-      !!                kl          : thickness category new ice is added to
-      !!                pa_newice   : area fraction of new ice formation
-      !!                pa_i_before : ice concentration *after* lateral growth
-      !!                              but *before* new ice growth at 1-D array
-      !!                              index ki and in thickness category kl
+      !! ** Input   :   pa_ifsd(nn_nfsd) : floe size distribution at one grid
+      !!                                   point and for one thickness category
+      !!                pa_newice        : area fraction of new ice formation
+      !!                pa_i_before      : ice concentration *after* lateral growth
+      !!                                   but *before* new ice growth at 1-D array
       !!
       !! ** Note    :   This routine only updates the floe size distribution,
       !!                not ice concentration a_i, which is done in ice_thd_do
       !!
       !!-------------------------------------------------------------------
       !
-      INTEGER , INTENT(in) ::   ki            ! 1-D thermodynamic array index
-      INTEGER , INTENT(in) ::   kl            ! thickness cat. new ice added to
-      REAL(wp), INTENT(in) ::   pa_newice     ! area fraction of new ice
-      REAL(wp), INTENT(in) ::   pa_i_before   ! a_i at 1-D index ki, in thickness
-      !                                       ! cat. = kl, after lat. growth of
-      !                                       ! existing ice but before addition
-      !                                       ! of pa_newice
+      REAL(wp), DIMENSION(nn_nfsd), INTENT(inout) ::   pa_ifsd       ! FSD at one location, one thickness cat.
+      REAL(wp)                    , INTENT(in)    ::   pa_newice     ! area fraction of new ice
+      REAL(wp)                    , INTENT(in)    ::   pa_i_before   ! a_i after lat. growth of
+      !                                                              ! existing ice but before addition
+      !                                                              ! of pa_newice
       !
       INTEGER ::   jf   ! dummy loop index
       !
       !!-------------------------------------------------------------------
 
       IF( pa_newice > 0._wp ) THEN
-         IF( SUM(a_ifsd_2d(ki,:,kl)) > epsi10 ) THEN
+         IF( SUM(pa_ifsd(:)) > epsi10 ) THEN
             !
             ! --- Add new ice to smallest floe size category
             !
             ! The area fraction of ice in the smallest floe size category, r0,
             ! and thickness category to which new ice is added, h, is:
             !
-            !    [ L(r0,h)g(h)drdh ]_before = a_ifsd_2d(ki,1,kl) * pa_i_before
+            !    [ L(r0,h)g(h)drdh ]_before = pa_ifsd(1) * pa_i_before
             !
             ! before addition of pa_newice. Then, after addition of new ice:
             !
@@ -336,8 +331,7 @@ CONTAINS
             ! too, achieved by rearranging the above. This is why it is necessary
             ! to pass pa_i_before to this routine rather than just using a_i_2d.
             !
-            a_ifsd_2d(ki,1,kl) = (a_ifsd_2d(ki,1,kl)*pa_i_before + pa_newice)   &
-               &                 / (pa_i_before + pa_newice)
+            pa_ifsd(1) = (pa_ifsd(1)*pa_i_before + pa_newice) / (pa_i_before + pa_newice)
 
             ! --- Adjust other floe size categories
             !
@@ -350,21 +344,20 @@ CONTAINS
             ! Rearranging gives L(r,h)_after and is thus updated:
             !
             DO jf = 2, nn_nfsd
-               a_ifsd_2d(ki,jf,kl) = a_ifsd_2d(ki,jf,kl)*pa_i_before   &
-                  &                  / (pa_i_before + pa_newice)
+               pa_ifsd(jf) = pa_ifsd(jf)*pa_i_before / (pa_i_before + pa_newice)
             ENDDO
 
          ELSE
             !
             ! --- Entirely new ice: put in smallest floe size category and
             !     specified thickness category:
-            a_ifsd_2d(ki, 1        , kl) = 1._wp
-            a_ifsd_2d(ki, 2:nn_nfsd, kl) = 0._wp
+            pa_ifsd(1        ) = 1._wp
+            pa_ifsd(2:nn_nfsd) = 0._wp
 
          ENDIF
       ENDIF
 
-      CALL fsd_cleanup( a_ifsd_2d(ki,:,kl) )
+      CALL fsd_cleanup( pa_ifsd )
 
    END SUBROUTINE ice_fsd_add_newice
 
