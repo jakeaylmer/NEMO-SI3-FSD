@@ -1,13 +1,10 @@
 Versions of the main code/software with which the modified source code in this
 repository have been compiled and tested with at the current commit are:
 
-XIOS2 revision: 2660
+XIOS2 revision: 2738
 
-NEMO main branch commit hash: 6357c395
-git describe --tags: no-more-MLF-145-g6357c395
-
-NEMO branch_5.0 branch commit hash: 45f410bb
-git describe --tags: 5.0-2-g45f410bb
+NEMO main commit hash: d7ad8c2e
+git describe --tags: no-more-MLF-233-gd7ad8c2e
 
 
 Compiler and libraries on UoR RACC2
@@ -16,7 +13,7 @@ mpi/openmpi-x86_64
 netCDF 4.7.0
 netCDF-Fortran 4.5.2
 
-GNU Fortran (GCC) 8.5.0 20210514 (Red Hat 8.5.0-22)
+GNU Fortran (GCC) 8.5.0 20210514 (Red Hat 8.5.0-26)
 Copyright (C) 2018 Free Software Foundation, Inc.
 This is free software; see the source for copying conditions.  There is NO
 warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

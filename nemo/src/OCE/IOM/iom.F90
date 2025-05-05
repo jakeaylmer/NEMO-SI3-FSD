@@ -49,9 +49,12 @@ MODULE iom
    PUBLIC   !   must be public to be able to access iom_def through iom
 
 #if defined key_xios
-   LOGICAL, PUBLIC, PARAMETER ::   lk_iomput = .TRUE.        !: iom_put flag
+   LOGICAL, PUBLIC                 , PARAMETER :: lk_iomput = .TRUE.                        !: iom_put flag
+   INTEGER                         , PARAMETER :: nsfx = 3                                  !: number of suffixes used in domain/grid definitions
+   CHARACTER(LEN=6),DIMENSION(nsfx), PARAMETER :: csfx = (/'      ', '_inner', '_halo1' /)  !: suffixes used in domain/grid definitions
+   INTEGER         ,DIMENSION(nsfx)            :: nhsz ! (/  nn_hls,        0,       1  /)  !: halos sizes used in domain/grid definitions
 #else
-   LOGICAL, PUBLIC, PARAMETER ::   lk_iomput = .FALSE.       !: iom_put flag
+   LOGICAL, PUBLIC                 , PARAMETER :: lk_iomput = .FALSE.                       !: iom_put flag
 #endif
    PUBLIC iom_init, iom_init_closedef, iom_swap, iom_open, iom_close, iom_setkt, iom_varid, iom_get, iom_get_var
    PUBLIC iom_chkatt, iom_getatt, iom_putatt, iom_getszuld, iom_rstput, iom_delay_rst, iom_put
@@ -66,7 +69,7 @@ MODULE iom
    PRIVATE iom_p1d_sp, iom_p2d_sp, iom_p3d_sp, iom_p4d_sp
    PRIVATE iom_p1d_dp, iom_p2d_dp, iom_p3d_dp, iom_p4d_dp
 #if defined key_xios
-   PRIVATE iom_set_domain_attr, iom_set_axis_attr, iom_set_field_attr, iom_set_file_attr, iom_get_file_attr, iom_set_grid_attr
+   PRIVATE iom_set_domain_attr, iom_set_axis_attr, iom_set_field_attr, iom_set_file_attr, iom_get_file_attr
    PRIVATE set_grid, set_grid_bounds, set_scalar, set_xmlatt, set_mooring, iom_sdate
    PRIVATE iom_set_rst_context, iom_set_vars_active
 # endif
@@ -174,6 +177,9 @@ CONTAINS
       IF(.NOT.llrst_context) CALL set_scalar
       !
       IF( cdname == cxios_context ) THEN
+
+         nhsz = (/ nn_hls, 0, 1  /)
+         
          CALL set_grid( "T", glamt, gphit, .FALSE., .FALSE. )
          CALL set_grid( "U", glamu, gphiu, .FALSE., .FALSE. )
          CALL set_grid( "V", glamv, gphiv, .FALSE., .FALSE. )
@@ -182,36 +188,27 @@ CONTAINS
          CALL set_grid_znl( gphit )
          !
          IF( ln_cfmeta ) THEN   ! Add additional grid metadata
-            CALL iom_set_domain_attr("grid_T"      , area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_T_halo1", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_T_inner", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_U"      , area = REAL( e1e2u(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_U_halo1", area = REAL( e1e2u(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_U_inner", area = REAL( e1e2u(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_V"      , area = REAL( e1e2v(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_V_halo1", area = REAL( e1e2v(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_V_inner", area = REAL( e1e2v(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_W"      , area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_W_halo1", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_W_inner", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_F"      , area = REAL( e1e2f(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_F_halo1", area = REAL( e1e2f(Nis0:Nie0, Njs0:Nje0), dp))
-            CALL iom_set_domain_attr("grid_F_inner", area = REAL( e1e2f(Nis0:Nie0, Njs0:Nje0), dp))
+            CALL iom_set_domain_attr("grid_T", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
+            CALL iom_set_domain_attr("grid_U", area = REAL( e1e2u(Nis0:Nie0, Njs0:Nje0), dp))
+            CALL iom_set_domain_attr("grid_V", area = REAL( e1e2v(Nis0:Nie0, Njs0:Nje0), dp))
+            CALL iom_set_domain_attr("grid_W", area = REAL( e1e2t(Nis0:Nie0, Njs0:Nje0), dp))
+            CALL iom_set_domain_attr("grid_F", area = REAL( e1e2f(Nis0:Nie0, Njs0:Nje0), dp))
             CALL set_grid_bounds( "T", glamf, gphif, glamt, gphit )
             CALL set_grid_bounds( "U", glamv, gphiv, glamu, gphiu )
             CALL set_grid_bounds( "V", glamu, gphiu, glamv, gphiv )
             CALL set_grid_bounds( "W", glamf, gphif, glamt, gphit )
             CALL set_grid_bounds( "F", glamt, gphit, glamf, gphif )
          ENDIF
+         !
       ENDIF
       !
       ! vertical grid definition
       IF(.NOT.llrst_context) THEN
-         CALL iom_set_axis_attr(  "deptht", paxis = gdept_1d )
-         CALL iom_set_axis_attr(  "depthu", paxis = gdept_1d )
-         CALL iom_set_axis_attr(  "depthv", paxis = gdept_1d )
-         CALL iom_set_axis_attr(  "depthw", paxis = gdepw_1d )
-          CALL iom_set_axis_attr(  "depthf", paxis = gdept_1d )
+         CALL iom_set_axis_attr( "deptht", paxis = gdept_1d )
+         CALL iom_set_axis_attr( "depthu", paxis = gdept_1d )
+         CALL iom_set_axis_attr( "depthv", paxis = gdept_1d )
+         CALL iom_set_axis_attr( "depthw", paxis = gdepw_1d )
+         CALL iom_set_axis_attr( "depthf", paxis = gdept_1d )
 
           ! ABL
          IF( .NOT. ALLOCATED(ght_abl) ) THEN   ! force definition for xml files (xios)
@@ -229,11 +226,11 @@ CONTAINS
          zw_bnds(1,:      ) = gdepw_1d(:)
          zw_bnds(2,1:jpkm1) = gdepw_1d(2:jpk)
          zw_bnds(2,jpk:   ) = gdepw_1d(jpk) + e3t_1d(jpk)
-         CALL iom_set_axis_attr(  "deptht", bounds=zw_bnds )
-         CALL iom_set_axis_attr(  "depthu", bounds=zw_bnds )
-         CALL iom_set_axis_attr(  "depthv", bounds=zw_bnds )
-         CALL iom_set_axis_attr(  "depthw", bounds=zt_bnds )
-          CALL iom_set_axis_attr(  "depthf", bounds=zw_bnds )
+         CALL iom_set_axis_attr( "deptht", bounds=zw_bnds )
+         CALL iom_set_axis_attr( "depthu", bounds=zw_bnds )
+         CALL iom_set_axis_attr( "depthv", bounds=zw_bnds )
+         CALL iom_set_axis_attr( "depthw", bounds=zt_bnds )
+         CALL iom_set_axis_attr( "depthf", bounds=zw_bnds )
 
          ! ABL
          za_bnds(1,:) = ghw_abl(1:jpkam1)
@@ -244,15 +241,28 @@ CONTAINS
          CALL iom_set_axis_attr( "ghw_abl", bounds=za_bnds )
 
 # if defined key_si3
-         CALL iom_set_axis_attr( "ncatice", (/ (REAL(ji,wp), ji=1,jpl) /) )
+         CALL iom_set_axis_attr( "ncatice", (/ (REAL(ji,wp), ji=1,jpl   ) /) )
          CALL iom_set_axis_attr( "nlayice", (/ (REAL(ji,wp), ji=1,nlay_i) /) )
          CALL iom_set_axis_attr( "nfsdice", (/ (REAL(ji,wp), ji=1,nn_nfsd) /) )
+         CALL iom_duplicate_grid( 'grid_T_ncatice', 'grid_T', (/          'ncatice'/) )
+         CALL iom_duplicate_grid( 'grid_T_nlayice', 'grid_T', (/'nlayice','ncatice'/) )
          ! SIMIP diagnostics (4 main arctic straits)
-         CALL iom_set_axis_attr( "nstrait", (/ (REAL(ji,wp), ji=1,4) /) )
+         CALL iom_set_axis_attr( "nstrait", (/ (REAL(ji,wp), ji=1,4     ) /) )
 # endif
 #if defined key_top
          IF( ALLOCATED(profsed) ) CALL iom_set_axis_attr( "profsed", paxis = profsed )
+         CALL iom_duplicate_grid(          'grid_T_3DS', 'grid_T', (/'profsed'/)   )
 #endif
+         CALL iom_duplicate_grid(     'grid_T_zoom_300', 'grid_T', (/'deptht300'/) )
+         CALL iom_duplicate_grid(    'diamlr_grid_T_2D', 'grid_T', ldscalar=.TRUE. )
+         CALL iom_duplicate_grid(    'diamlr_grid_U_2D', 'grid_U', ldscalar=.TRUE. )
+         CALL iom_duplicate_grid(    'diamlr_grid_V_2D', 'grid_V', ldscalar=.TRUE. )
+         CALL iom_duplicate_grid(    'diamlr_grid_W_2D', 'grid_W', ldscalar=.TRUE. )
+
+         CALL iom_duplicate_grid( 'diadetide_grid_T_2D', 'grid_T', ldscalar=.TRUE. )
+         CALL iom_duplicate_grid( 'diadetide_grid_U_2D', 'grid_U', ldscalar=.TRUE. )
+         CALL iom_duplicate_grid( 'diadetide_grid_V_2D', 'grid_V', ldscalar=.TRUE. )
+
          CALL iom_set_axis_attr( "icbcla", class_num )
          CALL iom_set_axis_attr( "icbbas", basicb_num)
          CALL iom_set_axis_attr( "iax_20C", (/ REAL(20,wp) /) )   ! strange syntaxe and idea...
@@ -490,6 +500,7 @@ CONTAINS
       REAL(sp), OPTIONAL, INTENT(IN), DIMENSION(:, :, :) :: rs3
       CHARACTER(len=30)                                  :: clgsuf
       INTEGER, DIMENSION(2)                              :: ihls
+      INTEGER                                            :: jn
 #if defined key_xios
       TYPE(xios_field) :: field_hdl
       TYPE(xios_file) :: file_hdl
@@ -511,14 +522,12 @@ CONTAINS
          ihls(:) = 0
       ENDIF
 
+      clgsuf = 'not defined'
+      DO jn = 1, nsfx
+         IF( ihls(1) == nhsz(jn) .AND. ihls(2) == nhsz(jn) ) clgsuf = csfx(jn)
+      END DO
       ! Choose horizontal grid based on number of halo points
-      IF(     ihls(1) == 0      .AND. ihls(2) == 0      ) THEN     ! Inner domain only
-         clgsuf = "_inner"
-      ELSEIF( ihls(1) == nn_hls .AND. ihls(2) == nn_hls ) THEN     ! nn_hls halo points
-         clgsuf = ""
-      ELSEIF( ihls(1) == 1      .AND. ihls(2) == 1      ) THEN     ! 1 halo point, nn_hls > 1
-         clgsuf = "_halo1"
-      ELSE
+      IF( clgsuf == 'not defined' ) THEN
          WRITE(ctmp1,*) 'iom_set_rstw_active: unsupported array shape with number of i-j halo points:'
          WRITE(ctmp2,*) ihls(1), 'x', ihls(2)
          CALL ctl_stop(ctmp1, ctmp2)
@@ -631,10 +640,6 @@ CONTAINS
 
       CALL xios_get_handle("domain_definition",domaingroup_hdl)
       CALL xios_add_child(domaingroup_hdl, domain_hdl, "grid_N")
-      CALL xios_add_child(domaingroup_hdl, domain_hdl, "grid_N_halo1")
-      CALL xios_add_child(domaingroup_hdl, domain_hdl, "grid_N_inner")
-      CALL xios_set_domain_attr("grid_N_halo1", name="grid_N")
-      CALL xios_set_domain_attr("grid_N_inner", name="grid_N")
       CALL set_grid("N", glamt, gphit, .TRUE., ld_rstr)
 
       CALL xios_get_handle("axis_definition",axisgroup_hdl)
@@ -2169,11 +2174,12 @@ CONTAINS
    !!   'key_xios'                                         XIOS interface
    !!----------------------------------------------------------------------
 
-   SUBROUTINE iom_set_domain_attr( cdid, ni_glo, nj_glo, ibegin, jbegin, ni, nj,                                               &
-      &                                    data_dim, data_ibegin, data_ni, data_jbegin, data_nj, lonvalue, latvalue, mask,     &
-      &                                  ntiles, tile_ibegin, tile_jbegin, tile_ni, tile_nj,                                   &
-      &                                  tile_data_ibegin, tile_data_jbegin, tile_data_ni, tile_data_nj,                       &
-      &                                    nvertex, bounds_lon, bounds_lat, area )
+   SUBROUTINE iom_set_domain_attr( cdid, ni_glo, nj_glo, ibegin, jbegin, ni, nj,                                     &
+      &                            data_dim, data_ibegin, data_ni, data_jbegin, data_nj, lonvalue, latvalue,         &
+      &                            ntiles, tile_ibegin, tile_jbegin, tile_ni, tile_nj, mask_1D, mask_3D,             &
+      &                            tile_data_ibegin, tile_data_jbegin, tile_data_ni, tile_data_nj,                   &
+      &                            nvertex, bounds_lon, bounds_lat, area,                                            &
+      &                            cdsfx, khsz, ldogrd )
       !!----------------------------------------------------------------------
       !!----------------------------------------------------------------------
       CHARACTER(LEN=*)                  , INTENT(in) ::   cdid
@@ -2184,74 +2190,223 @@ CONTAINS
       INTEGER                 , OPTIONAL, INTENT(in) ::   nvertex, ntiles
       REAL(dp), DIMENSION(:)  , OPTIONAL, INTENT(in) ::   lonvalue, latvalue
       REAL(dp), DIMENSION(:,:), OPTIONAL, INTENT(in) ::   bounds_lon, bounds_lat, area
-      LOGICAL , DIMENSION(:)  , OPTIONAL, INTENT(in) ::   mask
+      LOGICAL,  DIMENSION(:)  , OPTIONAL, INTENT(in) ::   mask_1D
+      LOGICAL,DIMENSION(:,:,:), OPTIONAL, INTENT(in) ::   mask_3D
+      CHARACTER(LEN=*)        , OPTIONAL, INTENT(in) ::   cdsfx   ! overwrite csfx definition 
+      INTEGER                 , OPTIONAL, INTENT(in) ::   khsz    ! overwrite nhsz definition
+      LOGICAL                 , OPTIONAL, INTENT(in) ::   ldogrd 
+      !
+      TYPE(xios_gridgroup)                        :: gridgroup_hdl
+      TYPE(xios_grid)                             :: grid_hdl
+      TYPE(xios_domaingroup)                      :: domaingroup_hdl
+      TYPE(xios_domain)                           :: domain_hdl
+      TYPE(xios_axis)                             :: axis_hdl
+      CHARACTER(LEN=64)                           :: cldom, clgrd
+      CHARACTER(len= 1)                           :: cl1          ! last character of this name
+      CHARACTER(LEN= 6), ALLOCATABLE,DIMENSION(:) :: clsfx
+      INTEGER          , ALLOCATABLE,DIMENSION(:) :: ihsz
+      INTEGER                                     :: jn, isfx
+      LOGICAL                                     :: lldogrd
       !!----------------------------------------------------------------------
       !
-      IF( xios_is_valid_domain     (cdid) ) THEN
-         CALL xios_set_domain_attr     ( cdid, ni_glo=ni_glo, nj_glo=nj_glo, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj,   &
-            &    data_dim=data_dim, data_ibegin=data_ibegin, data_ni=data_ni, data_jbegin=data_jbegin, data_nj=data_nj ,   &
-#ifndef key_xios3
-            &    ntiles=ntiles, tile_ibegin=tile_ibegin, tile_jbegin=tile_jbegin, tile_ni=tile_ni, tile_nj=tile_nj,        &
-            &    tile_data_ibegin=tile_data_ibegin, tile_data_jbegin=tile_data_jbegin,                                     &
-            &    tile_data_ni=tile_data_ni, tile_data_nj=tile_data_nj,                                                     &
-#endif
-            &    lonvalue_1D=lonvalue, latvalue_1D=latvalue, mask_1D=mask, nvertex=nvertex, bounds_lon_1D=bounds_lon,      &
-            &    bounds_lat_1D=bounds_lat, area=area, type='curvilinear')
+      IF(PRESENT(cdsfx)) THEN
+         isfx = 1
+         ALLOCATE(clsfx(isfx), ihsz(isfx))
+         clsfx(1) = cdsfx
+         ihsz(1) = khsz
+      ELSE
+         isfx = nsfx
+         ALLOCATE(clsfx(isfx), ihsz(isfx))
+         clsfx(:) = csfx(:)
+         ihsz(:) = nhsz(:)
       ENDIF
-      IF( xios_is_valid_domaingroup(cdid) ) THEN
-         CALL xios_set_domaingroup_attr( cdid, ni_glo=ni_glo, nj_glo=nj_glo, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj,   &
-            &    data_dim=data_dim, data_ibegin=data_ibegin, data_ni=data_ni, data_jbegin=data_jbegin, data_nj=data_nj ,   &
+      lldogrd = .NOT. PRESENT(cdsfx)   ! add new grid definitions in the default case
+      IF( PRESENT(ldogrd) ) lldogrd = ldogrd
+      !
+      CALL xios_get_handle( "domain_definition", domaingroup_hdl )        ! get domain_definition handle
+      CALL xios_get_handle(   "grid_definition",   gridgroup_hdl )        ! get   grid_definition handle
+      !
+      IF( xios_is_valid_domain(cdid) ) THEN                                 ! must be found in the xml file
+         DO jn = 1, isfx
+            cldom = TRIM(cdid)//clsfx(jn)
+            IF( .NOT. xios_is_valid_domain(cldom) )   CALL xios_add_child( domaingroup_hdl, domain_hdl, cldom )
+            CALL xios_set_domain_attr( cldom, name = cdid )   ! force the name to avoid duplicated dimension names
+
+            IF( PRESENT(data_ibegin) ) THEN
+               CALL xios_set_domain_attr( cldom, data_ibegin = data_ibegin - ihsz(jn), data_ni = data_ni + 2*ihsz(jn),   &
+                  &                              data_jbegin = data_jbegin - ihsz(jn), data_nj = data_nj + 2*ihsz(jn) )
+            ENDIF
 #ifndef key_xios3
-            &    ntiles=ntiles, tile_ibegin=tile_ibegin, tile_jbegin=tile_jbegin, tile_ni=tile_ni, tile_nj=tile_nj,        &
-            &    tile_data_ibegin=tile_data_ibegin, tile_data_jbegin=tile_data_jbegin,                                     &
-            &    tile_data_ni=tile_data_ni, tile_data_nj=tile_data_nj,                                                     &
+            IF( PRESENT(ntiles) ) THEN
+               CALL xios_set_domain_attr( cldom, ntiles = ntiles,                                                  &
+                  &    tile_ibegin      = tile_ibegin                , tile_ni      = tile_ni                  ,   &
+                  &    tile_jbegin      = tile_jbegin                , tile_nj      = tile_nj                  ,   &
+                  &    tile_data_ibegin = tile_data_ibegin - ihsz(jn), tile_data_ni = tile_data_ni + 2*ihsz(jn),   &
+                  &    tile_data_jbegin = tile_data_jbegin - ihsz(jn), tile_data_nj = tile_data_nj + 2*ihsz(jn) )
+            ENDIF
 #endif
-            &    lonvalue_1D=lonvalue, latvalue_1D=latvalue, mask_1D=mask, nvertex=nvertex, bounds_lon_1D=bounds_lon,      &
-            &    bounds_lat_1D=bounds_lat, area=area, type='curvilinear' )
+            CALL xios_set_domain_attr( cldom, ni_glo = ni_glo, nj_glo = nj_glo, ibegin = ibegin, jbegin = jbegin, ni = ni, nj = nj,   &
+               &    lonvalue_1D = lonvalue, latvalue_1D = latvalue, bounds_lon_1D = bounds_lon, bounds_lat_1D = bounds_lat,           &
+               &    mask_1D = mask_1D, nvertex = nvertex, area = area, TYPE = 'curvilinear', data_dim = data_dim )
+
+            IF( lldogrd ) THEN                                            ! add new grid definitions
+               clgrd = TRIM(cdid)//'_2D'//clsfx(jn)                       ! new 2D grid name
+               IF( .NOT. xios_is_valid_grid(clgrd) ) THEN                 ! if not already defined
+                  CALL xios_add_child( gridgroup_hdl, grid_hdl, clgrd )       ! add a new 2D grid to grid_definition
+                  CALL xios_add_child( grid_hdl, domain_hdl, clgrd )          ! add a new domain
+                  CALL xios_set_domain_attr( clgrd, domain_ref = cldom )      ! link this new domain to cldom
+                  CALL xios_set_domain_attr( clgrd, name = cdid )             ! force the name to avoid duplicated dimension names
+               ENDIF
+               clgrd = TRIM(cdid)//'_3D'//clsfx(jn)                       ! new 3D grid name
+               IF( .NOT. xios_is_valid_grid(clgrd) ) THEN                 ! if not already defined
+                  CALL xios_add_child( gridgroup_hdl, grid_hdl, clgrd )       ! add a new 3D grid to grid_definition
+                  CALL xios_add_child( grid_hdl, domain_hdl, clgrd )          ! add a new domain
+                  CALL xios_set_domain_attr( clgrd, domain_ref = cldom )      ! link this new domain to cldom
+                  CALL xios_set_domain_attr( clgrd, name = cdid )             ! force the name to avoid duplicated dimension names
+                  cl1 = cdid(LEN_TRIM(cdid):)                                 ! last letter of cdid
+                  cl1 = CHAR(ICHAR(cl1)+32)                                   ! from upper to lower case
+                  CALL xios_add_child( grid_hdl, axis_hdl, clgrd)             ! add a new axis
+                  CALL xios_set_axis_attr( clgrd, axis_ref = 'depth'//cl1 )   ! link this new axis to 'depth'//cl1
+                  CALL xios_set_axis_attr( clgrd, name = 'depth'//cl1 )       ! force the name to avoid duplicated dimension names
+               ENDIF
+               IF( PRESENT(mask_3D) )   CALL xios_set_grid_attr( clgrd, mask_3D = mask_3D )
+            ENDIF
+         END DO
       ENDIF
       !
-      CALL xios_solve_inheritance()
+      DEALLOCATE(clsfx, ihsz)
       !
    END SUBROUTINE iom_set_domain_attr
 
 
-   SUBROUTINE iom_set_zoom_domain_attr( cdid, ibegin, jbegin, ni, nj )
+   SUBROUTINE iom_set_zoom_domain_attr( cdid, ibegin, jbegin, ni, nj, cdsfx )
       !!----------------------------------------------------------------------
       !!----------------------------------------------------------------------
-      CHARACTER(LEN=*), INTENT(in) ::   cdid
-      INTEGER         , INTENT(in) ::   ibegin, jbegin, ni, nj
+      CHARACTER(LEN=*),           INTENT(in) ::   cdid
+      INTEGER         ,           INTENT(in) ::   ibegin, jbegin, ni, nj
+      CHARACTER(LEN=*), OPTIONAL, INTENT(in) ::   cdsfx   ! overwrite csfx definition 
       !
-      TYPE(xios_gridgroup) :: gridgroup_hdl
-      TYPE(xios_grid)      :: grid_hdl
-      TYPE(xios_domain)    :: domain_hdl
-      TYPE(xios_axis)      :: axis_hdl
-      CHARACTER(LEN=64)    :: cldomrefid   ! domain_ref name
-      CHARACTER(len=1)     :: cl1          ! last character of this name
-      !!----------------------------------------------------------------------
-      !
-#if ! defined key_xios3
-      IF( xios_is_valid_zoom_domain(cdid) ) THEN
-         ! define the zoom_domain attributs
-         CALL xios_set_zoom_domain_attr( cdid, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj )
+      TYPE(xios_gridgroup)   :: gridgroup_hdl
+      TYPE(xios_grid)        :: grid_hdl
+      TYPE(xios_domaingroup) :: domaingroup_hdl
+      TYPE(xios_domain)      :: domain_hdl
+#if defined key_xios3
+      TYPE(xios_extract_domain) :: extractdomain_hdl
 #else
-      IF( xios_is_valid_extract_domain(cdid) ) THEN
-         ! define the zoom_domain attributs
-         CALL xios_set_extract_domain_attr( cdid, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj )
+      TYPE(xios_zoom_domain) :: zoomdomain_hdl
 #endif
-         ! define a new 2D grid with this new domain
-         CALL xios_get_handle("grid_definition", gridgroup_hdl )
-         CALL xios_add_child(gridgroup_hdl, grid_hdl, TRIM(cdid)//'_2D' )   ! add a new 2D grid to grid_definition
-         CALL xios_add_child(grid_hdl, domain_hdl, TRIM(cdid) )             ! add its domain
-         ! define a new 3D grid with this new domain
-         CALL xios_add_child(gridgroup_hdl, grid_hdl, TRIM(cdid)//'_3D' )   ! add a new 3D grid to grid_definition
-         CALL xios_add_child(grid_hdl, domain_hdl, TRIM(cdid) )             ! add its domain
-         ! vertical axis
-         cl1 = cdid(LEN_TRIM(cdid):)                                        ! last letter of cdid
-         cl1 = CHAR(ICHAR(cl1)+32)                                          ! from upper to lower case
-         CALL xios_add_child(grid_hdl, axis_hdl, 'depth'//cl1)              ! add its axis
+      TYPE(xios_axis)        :: axis_hdl
+      CHARACTER(LEN=64)      :: cldom, clgrd  ! name
+      CHARACTER(len= 1)      :: cl1          ! last character of this name
+      CHARACTER(LEN= 6), ALLOCATABLE,DIMENSION(:) :: clsfx
+      INTEGER                :: jn, isfx
+      !!----------------------------------------------------------------------
+      !
+      IF(PRESENT(cdsfx)) THEN
+         isfx = 1
+         ALLOCATE(clsfx(isfx))
+         clsfx(1) = cdsfx
+      ELSE
+         isfx = nsfx
+         ALLOCATE(clsfx(isfx))
+         clsfx(:) = csfx(:)
       ENDIF
       !
+      CALL xios_get_handle( "domain_definition", domaingroup_hdl )        ! get domain_definition handle
+      CALL xios_get_handle(   "grid_definition",   gridgroup_hdl )        ! get   grid_definition handle
+      !
+      DO jn = 1, isfx
+         cl1 = cdid(LEN_TRIM(cdid):)                                      ! last letter of cdid
+         cldom = TRIM(cdid)//clsfx(jn)
+         ! new domain definition
+         IF( .NOT. xios_is_valid_domain(cldom) ) THEN                                 ! if cldom domain is not already defined in xml files
+            CALL xios_add_child( domaingroup_hdl, domain_hdl, cldom )                 ! add a new domain called cldom if not already defined
+            CALL xios_set_domain_attr( cldom, domain_ref='grid_'//cl1//clsfx(jn) )    ! link this new domain to 'grid_'//cl1//clsfx(jn)
+         ELSE
+            CALL xios_get_handle( cldom, domain_hdl )                                 ! get cldom handle
+         ENDIF
+         ! trick to avoid to duplicate dimension in output files : x_grid_T, x_grid_T_inner etc...
+         CALL xios_set_domain_attr( cldom, name='grid_'//cl1 )                        ! force the name to avoid duplicated dimension names
+#if defined key_xios3
+         IF( .NOT. xios_is_valid_extract_domain(cldom) ) &                                        ! if cldom extract_domain is not already defined in xml files
+            CALL xios_add_child( domain_hdl, extractdomain_hdl, cldom )                           ! add a child extract_domain called cldom
+         CALL xios_set_extract_domain_attr( cldom, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj )   ! define extract_domain attributs
+#else
+         IF( .NOT. xios_is_valid_zoom_domain(cldom) ) &                                           ! if cldom zoom_domain is not already defined in xml files
+            CALL xios_add_child( domain_hdl, zoomdomain_hdl, cldom )                              ! add a child zoom_domain called cldom
+         CALL xios_set_zoom_domain_attr( cldom, ibegin=ibegin, jbegin=jbegin, ni=ni, nj=nj )      ! define zoom_domain attributs
+#endif
+         IF( .NOT. PRESENT(cdsfx) ) THEN                               ! add new grid definitions in the default case
+            clgrd = TRIM(cdid)//'_2D'//clsfx(jn)                       ! new 2D grid name
+            IF( .NOT. xios_is_valid_grid(clgrd) ) THEN                 ! if not already defined
+               CALL xios_add_child( gridgroup_hdl, grid_hdl, clgrd )       ! add a new 2D grid to grid_definition
+               CALL xios_add_child( grid_hdl, domain_hdl, clgrd )          ! add a new domain
+               CALL xios_set_domain_attr( clgrd, domain_ref = cldom )      ! link this new domain to cldom
+               CALL xios_set_domain_attr( clgrd, name='grid_'//cl1 )       ! force the name to avoid duplicated dimension names
+            ENDIF
+            clgrd = TRIM(cdid)//'_3D'//clsfx(jn)                       ! new 3D grid name
+            IF( .NOT. xios_is_valid_grid(clgrd) ) THEN                 ! if not already defined
+               CALL xios_add_child( gridgroup_hdl, grid_hdl, clgrd )       ! add a new 3D grid to grid_definition
+               CALL xios_add_child( grid_hdl, domain_hdl, clgrd )          ! add a new domain
+               CALL xios_set_domain_attr( clgrd, domain_ref = cldom )      ! link this new domain to cldom
+               CALL xios_set_domain_attr( clgrd, name='grid_'//cl1 )       ! force the name to avoid duplicated dimension names
+               cl1 = CHAR(ICHAR(cl1)+32)                                   ! from upper to lower case
+               CALL xios_add_child( grid_hdl, axis_hdl, clgrd)             ! add a new axis
+               CALL xios_set_axis_attr( clgrd, axis_ref = 'depth'//cl1 )   ! link this new axis to 'depth'//cl1
+               CALL xios_set_axis_attr( clgrd, name = 'depth'//cl1 )       ! force the name to avoid duplicated dimension names
+            ENDIF
+         ENDIF
+      END DO
+      !
+      DEALLOCATE(clsfx)
+      !
    END SUBROUTINE iom_set_zoom_domain_attr
+
+
+   SUBROUTINE iom_duplicate_grid( cdgrd, cddom, cdaxe, ldscalar )
+      !!----------------------------------------------------------------------
+      !!----------------------------------------------------------------------
+      CHARACTER(LEN=*),                         INTENT(in) :: cdgrd  
+      CHARACTER(LEN=*),                         INTENT(in) :: cddom  
+      CHARACTER(LEN=*), OPTIONAL, DIMENSION(:), INTENT(in) :: cdaxe
+      LOGICAL         , OPTIONAL                           :: ldscalar
+      !
+      TYPE(xios_gridgroup)   :: gridgroup_hdl
+      TYPE(xios_grid)        :: grid_hdl
+      TYPE(xios_domain)      :: domain_hdl
+      TYPE(xios_axis)        :: axis_hdl
+      TYPE(xios_scalar)      :: scalar_hdl
+      CHARACTER(LEN=64)      :: cldom, clgrd  ! name
+      INTEGER                :: jn, ja, iax
+      LOGICAL                :: llscalar
+      !!----------------------------------------------------------------------
+      iax = 0
+      IF( PRESENT(cdaxe) ) iax = SIZE(cdaxe)
+      llscalar = .FALSE.
+      IF( PRESENT(ldscalar) ) llscalar = ldscalar
+      
+      CALL xios_get_handle( "grid_definition", gridgroup_hdl )   ! get grid_definition handle
+
+      DO jn = 1, nsfx
+         clgrd = TRIM(cdgrd)//csfx(jn)                               ! new grid name
+         IF( .NOT. xios_is_valid_grid(clgrd) ) THEN                  ! if not already defined
+            CALL xios_add_child( gridgroup_hdl, grid_hdl, clgrd )       ! add a grid to grid_definition
+            cldom = TRIM(cddom)//csfx(jn)
+            CALL xios_add_child( grid_hdl, domain_hdl, clgrd )          ! add a new domain
+            CALL xios_set_domain_attr( clgrd, domain_ref = cldom )      ! link this new domain to cldom
+            CALL xios_set_domain_attr( clgrd, name = cldom )            ! force the name to avoid duplicated dimension names
+            DO ja = 1, iax
+               CALL xios_add_child( grid_hdl, axis_hdl, clgrd)          ! add a new axis
+               CALL xios_set_axis_attr( clgrd, axis_ref = cdaxe(ja) )   ! link this new axis to cdaxe(ja)
+               CALL xios_set_axis_attr( clgrd, name = cdaxe(ja) )       ! force the name to avoid duplicated dimension names
+            END DO
+            IF(llscalar) THEN
+               CALL xios_add_child( grid_hdl, scalar_hdl, clgrd )
+            ENDIF
+         ENDIF
+      END DO
+
+   END SUBROUTINE iom_duplicate_grid
 
 
    SUBROUTINE iom_set_axis_attr( cdid, paxis, bounds )
@@ -2272,7 +2427,6 @@ CONTAINS
          IF( xios_is_valid_axis     (cdid) )   CALL xios_set_axis_attr     ( cdid)
          IF( xios_is_valid_axisgroup(cdid) )   CALL xios_set_axisgroup_attr( cdid)
       END IF
-      CALL xios_solve_inheritance()
    END SUBROUTINE iom_set_axis_attr
 
 
@@ -2285,7 +2439,6 @@ CONTAINS
       !!----------------------------------------------------------------------
       IF( xios_is_valid_field     (cdid) )   CALL xios_set_field_attr     ( cdid, freq_op=freq_op, freq_offset=freq_offset )
       IF( xios_is_valid_fieldgroup(cdid) )   CALL xios_set_fieldgroup_attr( cdid, freq_op=freq_op, freq_offset=freq_offset )
-      CALL xios_solve_inheritance()
    END SUBROUTINE iom_set_field_attr
 
 
@@ -2297,7 +2450,6 @@ CONTAINS
       !!----------------------------------------------------------------------
       IF( xios_is_valid_file     (cdid) )   CALL xios_set_file_attr     ( cdid, name=name, name_suffix=name_suffix )
       IF( xios_is_valid_filegroup(cdid) )   CALL xios_set_filegroup_attr( cdid, name=name, name_suffix=name_suffix )
-      CALL xios_solve_inheritance()
    END SUBROUTINE iom_set_file_attr
 
 
@@ -2328,17 +2480,6 @@ CONTAINS
       ENDIF
    END SUBROUTINE iom_get_file_attr
 
-
-   SUBROUTINE iom_set_grid_attr( cdid, mask )
-      !!----------------------------------------------------------------------
-      !!----------------------------------------------------------------------
-      CHARACTER(LEN=*)                   , INTENT(in) ::   cdid
-      LOGICAL, DIMENSION(:,:,:), OPTIONAL, INTENT(in) ::   mask
-      !!----------------------------------------------------------------------
-      IF( xios_is_valid_grid     (cdid) )   CALL xios_set_grid_attr     ( cdid, mask_3D=mask )
-      IF( xios_is_valid_gridgroup(cdid) )   CALL xios_set_gridgroup_attr( cdid, mask_3D=mask )
-      CALL xios_solve_inheritance()
-   END SUBROUTINE iom_set_grid_attr
 
    SUBROUTINE iom_setkt( kt, cdname )
       !!----------------------------------------------------------------------
@@ -2392,58 +2533,28 @@ CONTAINS
       LOGICAL, INTENT(IN) :: ldxios, ldrxios
       !!----------------------------------------------------------------------
       !
-      ! nn_hls halo points
-      CALL iom_set_domain_attr("grid_"//cdgrd,                                                                             &
-         &                     ni_glo=Ni0glo, nj_glo=Nj0glo, ibegin=mig(Nis0,0)-1, jbegin=mjg(Njs0,0)-1, ni=Ni_0, nj=Nj_0, &
-         &                     data_dim=2, data_ibegin=-nn_hls, data_ni=jpi,    data_jbegin=-nn_hls, data_nj=jpj    )
-      ! 1 halo point, nn_hls > 1
-      CALL iom_set_domain_attr("grid_"//cdgrd//"_halo1",                                                                   &
-         &                     ni_glo=Ni0glo, nj_glo=Nj0glo, ibegin=mig(Nis0,0)-1, jbegin=mjg(Njs0,0)-1, ni=Ni_0, nj=Nj_0, &
-         &                     data_dim=2, data_ibegin=-1,      data_ni=Ni_0+2, data_jbegin=-1,      data_nj=Nj_0+2 )
-      ! Inner domain only
-      CALL iom_set_domain_attr("grid_"//cdgrd//"_inner",                                                                   &
-         &                     ni_glo=Ni0glo, nj_glo=Nj0glo, ibegin=mig(Nis0,0)-1, jbegin=mjg(Njs0,0)-1, ni=Ni_0, nj=Nj_0, &
-         &                     data_dim=2, data_ibegin=0,       data_ni=Ni_0,   data_jbegin=0,       data_nj=Nj_0   )
+      CALL iom_set_domain_attr("grid_"//cdgrd, data_dim = 2, ni_glo = Ni0glo, nj_glo = Nj0glo, ldogrd = .NOT. ldxios,     &
+         &                          ibegin = mig(Nis0,0)-1,      jbegin = mjg(Njs0,0)-1,      ni = Ni_0,      nj = Nj_0,   &
+         &                     data_ibegin =          0   , data_jbegin =          0   , data_ni = Ni_0, data_nj = Nj_0 )
 
       IF( ln_tile ) THEN
          DO jn = 1, nijtile
             ini(jn) = ntei_a(jn) - ntsi_a(jn) + 1     ! Tile size in i and j
             inj(jn) = ntej_a(jn) - ntsj_a(jn) + 1
-            idb(jn) = -nn_hls                         ! Tile data offset (halo size)
+            idb(jn) = 0                               ! Tile default data offset (halo size)
          END DO
 
-         ! Data includes all halo points
-         CALL iom_set_domain_attr("grid_"//cdgrd, ntiles=nijtile,                                     &
-            & tile_ibegin=ntsi_a(1:nijtile) - nn_hls - 1, tile_jbegin=ntsj_a(1:nijtile) - nn_hls - 1, &
-            & tile_ni=ini(:), tile_nj=inj(:),                                                         &
-            & tile_data_ibegin=idb(:), tile_data_jbegin=idb(:),                                       &
-            & tile_data_ni=ini(:) - 2 * idb(:), tile_data_nj=inj(:) - 2 * idb(:))
-         ! Data contains one halo point (less than nn_hls)
-         idb(:) = -1
-         CALL iom_set_domain_attr("grid_"//cdgrd//"_halo1", ntiles=nijtile,                           &
-            & tile_ibegin=ntsi_a(1:nijtile) - nn_hls - 1, tile_jbegin=ntsj_a(1:nijtile) - nn_hls - 1, &
-            & tile_ni=ini(:), tile_nj=inj(:),                                                         &
-            & tile_data_ibegin=idb(:), tile_data_jbegin=idb(:),                                       &
-            & tile_data_ni=ini(:) - 2 * idb(:), tile_data_nj=inj(:) - 2 * idb(:))
-         ! Data contains no halo points
-         idb(:) = 0
-         CALL iom_set_domain_attr("grid_"//cdgrd//"_inner", ntiles=nijtile,                           &
-            & tile_ibegin=ntsi_a(1:nijtile) - nn_hls - 1, tile_jbegin=ntsj_a(1:nijtile) - nn_hls - 1, &
-            & tile_ni=ini(:), tile_nj=inj(:),                                                         &
-            & tile_data_ibegin=idb(:), tile_data_jbegin=idb(:),                                       &
-            & tile_data_ni=ini(:) - 2 * idb(:), tile_data_nj=inj(:) - 2 * idb(:))
+         CALL iom_set_domain_attr("grid_"//cdgrd, ntiles = nijtile,                           &
+            & tile_ibegin      = ntsi_a(1:nijtile) - nn_hls - 1, tile_ni      = ini(:),   &
+            & tile_jbegin      = ntsj_a(1:nijtile) - nn_hls - 1, tile_nj      = inj(:),   &
+            & tile_data_ibegin = idb(:)                        , tile_data_ni = ini(:),   &
+            & tile_data_jbegin = idb(:)                        , tile_data_nj = inj(:) )
       ENDIF
 
 !don't define lon and lat for restart reading context.
       IF ( .NOT.ldrxios ) &
          CALL iom_set_domain_attr("grid_"//cdgrd, lonvalue = REAL(RESHAPE(plon(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp),   &
          &                                        latvalue = REAL(RESHAPE(plat(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp ))
-         CALL iom_set_domain_attr("grid_"//cdgrd//"_halo1",  &
-         &                        lonvalue = REAL(RESHAPE(plon(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp),   &
-         &                        latvalue = REAL(RESHAPE(plat(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp ))
-         CALL iom_set_domain_attr("grid_"//cdgrd//"_inner",  &
-         &                        lonvalue = REAL(RESHAPE(plon(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp),   &
-         &                        latvalue = REAL(RESHAPE(plat(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp ))
       !
       IF ( ln_mskland .AND. (.NOT.ldxios) ) THEN
          ! mask land points, keep values on coast line -> specific mask for U, V and W points
@@ -2457,12 +2568,8 @@ CONTAINS
                          zmask(:,:,1    ) = tmask(Nis0:Nie0, Njs0:Nje0,1)
          END SELECT
          !
-         CALL iom_set_domain_attr( "grid_"//cdgrd             , mask=RESHAPE(zmask(:,:,1),(/Ni_0*Nj_0    /)) /= 0. )
-         CALL iom_set_domain_attr( "grid_"//cdgrd//"_halo1"   , mask=RESHAPE(zmask(:,:,1),(/Ni_0*Nj_0    /)) /= 0. )
-         CALL iom_set_domain_attr( "grid_"//cdgrd//"_inner"   , mask=RESHAPE(zmask(:,:,1),(/Ni_0*Nj_0    /)) /= 0. )
-         CALL iom_set_grid_attr  ( "grid_"//cdgrd//"_3D"      , mask=RESHAPE(zmask(:,:,:),(/Ni_0,Nj_0,jpk/)) /= 0. )
-         CALL iom_set_grid_attr  ( "grid_"//cdgrd//"_3D_halo1", mask=RESHAPE(zmask(:,:,:),(/Ni_0,Nj_0,jpk/)) /= 0. )
-         CALL iom_set_grid_attr  ( "grid_"//cdgrd//"_3D_inner", mask=RESHAPE(zmask(:,:,:),(/Ni_0,Nj_0,jpk/)) /= 0. )
+         CALL iom_set_domain_attr( "grid_"//cdgrd, mask_1D = RESHAPE(zmask(:,:,1),(/Ni_0*Nj_0    /)) /= 0.   &
+            &                                    , mask_3D = RESHAPE(zmask(:,:,:),(/Ni_0,Nj_0,jpk/)) /= 0. )
       ENDIF
       !
    END SUBROUTINE set_grid
@@ -2524,12 +2631,6 @@ CONTAINS
       CALL iom_set_domain_attr("grid_"//cdgrd, &
            &                   bounds_lat = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,1),(/ 4,Ni_0*Nj_0 /)), dp),           &
            &                   bounds_lon = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,2),(/ 4,Ni_0*Nj_0 /)), dp), nvertex=4 )
-      CALL iom_set_domain_attr("grid_"//cdgrd//"_halo1", &
-           &                   bounds_lat = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,1),(/ 4,Ni_0*Nj_0 /)), dp),           &
-           &                   bounds_lon = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,2),(/ 4,Ni_0*Nj_0 /)), dp), nvertex=4 )
-      CALL iom_set_domain_attr("grid_"//cdgrd//"_inner", &
-           &                   bounds_lat = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,1),(/ 4,Ni_0*Nj_0 /)), dp),           &
-           &                   bounds_lon = real(RESHAPE(z_bnds(:,Nis0:Nie0,Njs0:Nje0,2),(/ 4,Ni_0*Nj_0 /)), dp), nvertex=4 )
       !
       DEALLOCATE( z_bnds, z_fld, z_rot )
       !
@@ -2552,11 +2653,12 @@ CONTAINS
       !
 !      CALL dom_ngb( -168.53_wp, 65.03_wp, ix, iy, 'T' ) !  i-line that passes through Bering Strait: Reference latitude (used in plots)
       CALL dom_ngb( 180.0_wp, 90.0_wp, ix, iy, 'T' ) !  i-line that passes near the North Pole : Reference latitude (used in plots)
-      CALL iom_set_domain_attr("gznl", ni_glo=Ni0glo, nj_glo=Nj0glo, ibegin=mig(Nis0,0)-1, jbegin=mjg(Njs0,0)-1, ni=Ni_0, nj=Nj_0)
-      CALL iom_set_domain_attr("gznl", data_dim=2, data_ibegin=0, data_ni=Ni_0, data_jbegin=0, data_nj=Nj_0)
-      CALL iom_set_domain_attr("gznl", lonvalue = real(zlon, dp),   &
-         &                             latvalue = real(RESHAPE(plat(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp))
-      CALL iom_set_zoom_domain_attr("ptr", ibegin=ix-1, jbegin=0, ni=1, nj=Nj0glo)
+      CALL iom_set_domain_attr("gznl", cdsfx='', khsz=0, ni_glo=Ni0glo, nj_glo=Nj0glo, ibegin=mig(Nis0,0)-1, jbegin=mjg(Njs0,0)-1, ni=Ni_0, nj=Nj_0)
+      CALL iom_set_domain_attr("gznl", cdsfx='', khsz=0, data_dim=2, data_ibegin=0, data_ni=Ni_0, data_jbegin=0, data_nj=Nj_0)
+      CALL iom_set_domain_attr("gznl", cdsfx='', khsz=0, lonvalue = REAL(zlon, dp),   &
+         &                                               latvalue = REAL(RESHAPE(plat(Nis0:Nie0, Njs0:Nje0),(/ Ni_0*Nj_0 /)),dp))
+      !
+      CALL iom_set_zoom_domain_attr("ptr", cdsfx='', ibegin=ix-1, jbegin=0, ni=1, nj=Nj0glo)
       !
       CALL iom_update_file_name('ptr')
       !
@@ -2573,11 +2675,11 @@ CONTAINS
       REAL(dp), DIMENSION(1)   ::   zz = 1.
       !!----------------------------------------------------------------------
       !
-      CALL iom_set_domain_attr('scalarpoint', ni_glo=jpnij, nj_glo=1, ibegin=narea-1, jbegin=0, ni=1, nj=1)
-      CALL iom_set_domain_attr('scalarpoint', data_dim=2, data_ibegin = 1, data_ni = 1, data_jbegin = 1, data_nj = 1)
+      CALL iom_set_domain_attr('scalarpoint', cdsfx='', khsz=0, ni_glo=jpnij, nj_glo=1, ibegin=narea-1, jbegin=0, ni=1, nj=1)
+      CALL iom_set_domain_attr('scalarpoint', cdsfx='', khsz=0, data_dim=2, data_ibegin = 1, data_ni = 1, data_jbegin = 1, data_nj = 1)
       !
       zz = REAL( narea, wp )
-      CALL iom_set_domain_attr('scalarpoint', lonvalue=zz, latvalue=zz)
+      CALL iom_set_domain_attr('scalarpoint', cdsfx='', khsz=0, lonvalue=zz, latvalue=zz)
       !
    END SUBROUTINE set_scalar
 
@@ -2616,15 +2718,15 @@ CONTAINS
       f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('ABL'             , freq_op=f_op, freq_offset=f_of)
 
       ! output file names (attribut: name)
-      DO ji = 1, 9
+      DO ji = 0, 9
          WRITE(cl1,'(i1)') ji
          CALL iom_update_file_name('file'//cl1)
       END DO
-      DO ji = 1, 99
+      DO ji = 0, 99
          WRITE(cl2,'(i2.2)') ji
          CALL iom_update_file_name('file'//cl2)
       END DO
-      DO ji = 1, 999
+      DO ji = 0, 999
          WRITE(cl3,'(i3.3)') ji
          CALL iom_update_file_name('file'//cl3)
       END DO
@@ -2653,6 +2755,8 @@ CONTAINS
       zlatpira = (/ -19.0, -14.0,  -8.0, 0.0, 4.0, 8.0, 12.0, 15.0, 20.0 /)
       CALL set_mooring( zlonpira, zlatpira )
       !
+      CALL xios_solve_inheritance()
+      !
    END SUBROUTINE set_xmlatt
 
 
@@ -2665,8 +2769,7 @@ CONTAINS
       !!----------------------------------------------------------------------
       REAL(wp), DIMENSION(:), INTENT(in) ::   plon, plat   ! longitudes/latitudes oft the mooring
       !
-!!$      CHARACTER(len=1),DIMENSION(4) ::   clgrd = (/ 'T', 'U', 'V', 'W' /)   ! suffix name
-      CHARACTER(len=1),DIMENSION(1) ::   clgrd = (/ 'T' /)        ! suffix name
+      CHARACTER(len=1),DIMENSION(4) ::   clgrd = (/ 'T', 'U', 'V', 'W' /)   ! suffix name
       CHARACTER(len=256)            ::   clname                   ! file name
       CHARACTER(len=256)            ::   clsuff                   ! suffix name
       CHARACTER(len=1)              ::   cl1                      ! 1 character
@@ -2675,47 +2778,47 @@ CONTAINS
       INTEGER                       ::   ix, iy                   ! i-,j- index
       REAL(wp)                      ::   zlon, zlat
       !!----------------------------------------------------------------------
-      DO jg = 1, SIZE(clgrd)
-         cl1 = clgrd(jg)
-         DO ji = 1, SIZE(plon)
-            DO jj = 1, SIZE(plat)
-               zlon = plon(ji)
-               zlat = plat(jj)
-               ! modifications for RAMA moorings
-               IF( zlon ==  67. .AND. zlat ==  15. )   zlon =  65.
-               IF( zlon ==  90. .AND. zlat <=  -4. )   zlon =  95.
-               IF( zlon ==  95. .AND. zlat ==  -4. )   zlat =  -5.
-               ! modifications for PIRATA moorings
-               IF( zlon == -38. .AND. zlat == -19. )   zlon = -34.
-               IF( zlon == -38. .AND. zlat == -14. )   zlon = -32.
-               IF( zlon == -38. .AND. zlat ==  -8. )   zlon = -30.
-               IF( zlon == -38. .AND. zlat ==   0. )   zlon = -35.
-               IF( zlon == -23. .AND. zlat ==  20. )   zlat =  21.
-               IF( zlon == -10. .AND. zlat == -14. )   zlat = -10.
-               IF( zlon == -10. .AND. zlat ==  -8. )   zlat =  -6.
-               IF( zlon == -10. .AND. zlat ==   4. ) THEN   ;   zlon = 0.   ;   zlat = 0.   ;   ENDIF
-               CALL dom_ngb( zlon, zlat, ix, iy, cl1 )
-               IF( zlon >= 0. ) THEN
-                  IF( zlon == REAL(NINT(zlon), wp) ) THEN   ;   WRITE(clon, '(i3,  a)') NINT( zlon), 'e'
-                  ELSE                                      ;   WRITE(clon, '(f5.1,a)')       zlon , 'e'
-                  ENDIF
-               ELSE
-                  IF( zlon == REAL(NINT(zlon), wp) ) THEN   ;   WRITE(clon, '(i3,  a)') NINT(-zlon), 'w'
-                  ELSE                                      ;   WRITE(clon, '(f5.1,a)')      -zlon , 'w'
-                  ENDIF
+      DO ji = 1, SIZE(plon)
+         DO jj = 1, SIZE(plat)
+            zlon = plon(ji)
+            zlat = plat(jj)
+            ! modifications for RAMA moorings
+            IF( zlon ==  67. .AND. zlat ==  15. )   zlon =  65.
+            IF( zlon ==  90. .AND. zlat <=  -4. )   zlon =  95.
+            IF( zlon ==  95. .AND. zlat ==  -4. )   zlat =  -5.
+            ! modifications for PIRATA moorings
+            IF( zlon == -38. .AND. zlat == -19. )   zlon = -34.
+            IF( zlon == -38. .AND. zlat == -14. )   zlon = -32.
+            IF( zlon == -38. .AND. zlat ==  -8. )   zlon = -30.
+            IF( zlon == -38. .AND. zlat ==   0. )   zlon = -35.
+            IF( zlon == -23. .AND. zlat ==  20. )   zlat =  21.
+            IF( zlon == -10. .AND. zlat == -14. )   zlat = -10.
+            IF( zlon == -10. .AND. zlat ==  -8. )   zlat =  -6.
+            IF( zlon == -10. .AND. zlat ==   4. ) THEN   ;   zlon = 0.   ;   zlat = 0.   ;   ENDIF
+            CALL dom_ngb( zlon, zlat, ix, iy, 'T' )
+            IF( zlon >= 0. ) THEN
+               IF( zlon == REAL(NINT(zlon), wp) ) THEN   ;   WRITE(clon, '(i3,  a)') NINT( zlon), 'e'
+               ELSE                                      ;   WRITE(clon, '(f5.1,a)')       zlon , 'e'
                ENDIF
-               IF( zlat >= 0. ) THEN
-                  IF( zlat == REAL(NINT(zlat), wp) ) THEN   ;   WRITE(clat, '(i2,  a)') NINT( zlat), 'n'
-                  ELSE                                      ;   WRITE(clat, '(f4.1,a)')       zlat , 'n'
-                  ENDIF
-               ELSE
-                  IF( zlat == REAL(NINT(zlat), wp) ) THEN   ;   WRITE(clat, '(i2,  a)') NINT(-zlat), 's'
-                  ELSE                                      ;   WRITE(clat, '(f4.1,a)')      -zlat , 's'
-                  ENDIF
+            ELSE
+               IF( zlon == REAL(NINT(zlon), wp) ) THEN   ;   WRITE(clon, '(i3,  a)') NINT(-zlon), 'w'
+               ELSE                                      ;   WRITE(clon, '(f5.1,a)')      -zlon , 'w'
                ENDIF
-               clname = TRIM(ADJUSTL(clat))//TRIM(ADJUSTL(clon))
+            ENDIF
+            IF( zlat >= 0. ) THEN
+               IF( zlat == REAL(NINT(zlat), wp) ) THEN   ;   WRITE(clat, '(i2,  a)') NINT( zlat), 'n'
+               ELSE                                      ;   WRITE(clat, '(f4.1,a)')       zlat , 'n'
+               ENDIF
+            ELSE
+               IF( zlat == REAL(NINT(zlat), wp) ) THEN   ;   WRITE(clat, '(i2,  a)') NINT(-zlat), 's'
+               ELSE                                      ;   WRITE(clat, '(f4.1,a)')      -zlat , 's'
+               ENDIF
+            ENDIF
+            clname = TRIM(ADJUSTL(clat))//TRIM(ADJUSTL(clon))
+            DO jg = 1, SIZE(clgrd)
+               cl1 = clgrd(jg)
                CALL iom_set_zoom_domain_attr(TRIM(clname)//cl1, ibegin= ix-1, jbegin= iy-1, ni=1, nj=1)
-
+               
                CALL iom_get_file_attr   (TRIM(clname)//cl1, name_suffix = clsuff                         )
                CALL iom_set_file_attr   (TRIM(clname)//cl1, name_suffix = TRIM(clsuff)//'_'//TRIM(clname))
                CALL iom_update_file_name(TRIM(clname)//cl1)
