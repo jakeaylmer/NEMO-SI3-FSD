@@ -27,7 +27,7 @@ MODULE iom
    USE in_out_manager  ! I/O manager
    USE lib_mpp           ! MPP library
    USE sbc_oce  , ONLY :   nn_fsbc, ght_abl, ghw_abl, e3t_abl, e3w_abl, jpka, jpkam1
-   USE icb_oce  , ONLY :   basicb_num, nclasses, class_num       !  !: iceberg classes
+   USE icb_oce  , ONLY :   nclasses, class_num       !  !: iceberg classes
 #if defined key_si3
    USE par_ice  , ONLY :   jpl, nlay_i, nn_nfsd
 #endif
@@ -264,7 +264,6 @@ CONTAINS
          CALL iom_duplicate_grid( 'diadetide_grid_V_2D', 'grid_V', ldscalar=.TRUE. )
 
          CALL iom_set_axis_attr( "icbcla", class_num )
-         CALL iom_set_axis_attr( "icbbas", basicb_num)
          CALL iom_set_axis_attr( "iax_20C", (/ REAL(20,wp) /) )   ! strange syntaxe and idea...
          CALL iom_set_axis_attr( "iax_26C", (/ REAL(26,wp) /) )   ! strange syntaxe and idea...
          CALL iom_set_axis_attr( "iax_28C", (/ REAL(28,wp) /) )   ! strange syntaxe and idea...
@@ -2713,8 +2712,6 @@ CONTAINS
       f_op%timestep = 2        ;  f_of%timestep = -1  ; CALL iom_set_field_attr('trendT_odd'      , freq_op=f_op, freq_offset=f_of)
       f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('SBC'             , freq_op=f_op, freq_offset=f_of)
       f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('SBC_scalar'      , freq_op=f_op, freq_offset=f_of)
-      f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('icbvar'          , freq_op=f_op, freq_offset=f_of)
-      f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('icbvar_bas'      , freq_op=f_op, freq_offset=f_of)
       f_op%timestep = nn_fsbc  ;  f_of%timestep =  0  ; CALL iom_set_field_attr('ABL'             , freq_op=f_op, freq_offset=f_of)
 
       ! output file names (attribut: name)
