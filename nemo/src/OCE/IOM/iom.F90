@@ -246,6 +246,8 @@ CONTAINS
          CALL iom_set_axis_attr( "nfsdice", (/ (REAL(ji,wp), ji=1,nn_nfsd) /) )
          CALL iom_duplicate_grid( 'grid_T_ncatice', 'grid_T', (/          'ncatice'/) )
          CALL iom_duplicate_grid( 'grid_T_nlayice', 'grid_T', (/'nlayice','ncatice'/) )
+         CALL iom_duplicate_grid( 'grid_T_fsd'    , 'grid_T', (/'nfsdice'          /) )
+         CALL iom_duplicate_grid( 'grid_T_fstd'   , 'grid_T', (/'nfsdice','ncatice'/) )
          ! SIMIP diagnostics (4 main arctic straits)
          CALL iom_set_axis_attr( "nstrait", (/ (REAL(ji,wp), ji=1,4     ) /) )
 # endif
