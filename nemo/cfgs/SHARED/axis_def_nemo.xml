@@ -15,7 +15,6 @@
   <axis id="depthw"  long_name="Vertical W levels"  unit="m" positive="down" />
   <axis id="depthf"  long_name="Vertical F levels"  unit="m" positive="down" />
   <axis id="icbcla"  long_name="Iceberg class"      unit="1"                 />
-  <axis id="icbbas"  long_name="Iceberg basin"      unit="1"                 />
   <axis id="ncatice" long_name="Ice category"       unit="1"                 />
   <axis id="nlayice" long_name="Ice layer"          unit="1"                 />
   <axis id="nfsdice" long_name="Ice floe size category" unit="1"             />
