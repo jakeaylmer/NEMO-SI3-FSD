@@ -594,6 +594,8 @@
    ln_vortex_force = .false.   !  Vortex Force term 
    ln_stshear  = .false.       !  include stokes shear in EKE computation
 !
+   ln_wave_spec = .false.      !  read wave energy spectrum
+!
    cn_dir      = './'      !  root directory for the waves data location
    !___________!_________________________!___________________!___________!_____________!________!___________!__________________!__________!_______________!
    !           !  file name              ! frequency (hours) ! variable  ! time interp.!  clim  ! 'yearly'/ ! weights filename ! rotation ! land/sea mask !

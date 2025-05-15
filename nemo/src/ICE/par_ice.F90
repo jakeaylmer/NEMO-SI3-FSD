@@ -117,6 +117,11 @@ MODULE par_ice
    INTEGER , PUBLIC ::   nn_nfsd          !: Number of floe-size categories
    REAL(wp), PUBLIC ::   rn_floeshape     !: Floe shape parameter (dimensionless)
 
+   !                                     !!** wave-ice interactions namelist (namwav)
+   LOGICAL , PUBLIC ::   ln_ice_wav       !: Activate wave ice interactions (T) or not (F)
+   LOGICAL , PUBLIC ::   ln_ice_wav_attn  !: Activate wave-in-ice attenuation scheme (Roach et al. 2018)
+   LOGICAL , PUBLIC ::   ln_ice_wav_spec  !: Read full wave spectrum from model/forcing
+
    !!----------------------------------------------------------------------
    !!                   shared other parameters
    !!----------------------------------------------------------------------

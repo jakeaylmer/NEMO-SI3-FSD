@@ -65,6 +65,7 @@ MODULE icestp
    USE icealb         ! sea-ice: albedo
    USE icefrm         ! sea-ice: form drag param
    USE icefsd         ! sea-ice: floe size distribution
+   USE icewav         ! sea-ice: interaction with ocean waves
    !
    USE bdy_oce , ONLY : ln_bdy   ! flag for bdy
    USE bdyice         ! unstructured open boundary data for sea-ice
@@ -301,6 +302,9 @@ CONTAINS
       !                                ! *after* ice_istate_init since FSD needs to know initial conditions options,
       !                                ! but *before* ice_dyn_init, because advection initialisation routines need to
       !                                ! know number of FSD categories)
+      !
+      CALL ice_wav_init                ! set wave-ice interaction module parameters
+      !                                ! (this must come after ice_fsd_init)
       !
       CALL ice_dyn_init                ! set ice dynamics parameters
       !

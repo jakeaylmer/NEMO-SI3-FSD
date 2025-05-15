@@ -23,6 +23,7 @@ MODULE sbcwave
    USE sbc_oce        ! Surface boundary condition: ocean fields
    USE bdy_oce        ! open boundary condition variables
    USE zdf_oce,  ONLY : ln_zdfswm ! Qiao wave enhanced mixing 
+   USE par_ice,  ONLY : ln_ice_wav, ln_ice_wav_attn, ln_ice_wav_spec ! sea-ice parameters
    !
    USE iom            ! I/O manager library
    USE in_out_manager ! I/O manager
@@ -357,7 +358,8 @@ CONTAINS
       !
       NAMELIST/namsbc_wave/ cn_dir, sn_cdg, sn_usd, sn_vsd, sn_hsw, sn_wmp, sn_wnum, sn_tauoc,   &
          &                  ln_cdgw, ln_sdw, ln_tauoc, ln_stcor, ln_charn, ln_taw, ln_phioc,     &
-         &                  ln_wave_test, ln_bern_srfc, ln_breivikFV_2016, ln_vortex_force, ln_stshear
+         &                  ln_wave_test, ln_bern_srfc, ln_breivikFV_2016, ln_vortex_force,      &
+         &                  ln_stshear, ln_wave_spec
       !!---------------------------------------------------------------------
       IF(lwp) THEN
          WRITE(numout,*)
@@ -383,6 +385,7 @@ CONTAINS
          WRITE(numout,*) '      TKE flux from wave                          ln_phioc = ', ln_phioc
          WRITE(numout,*) '      Surface shear with Stokes drift           ln_stshear = ', ln_stshear
          WRITE(numout,*) '      Test with constant wave fields          ln_wave_test = ', ln_wave_test
+         WRITE(numout,*) '      Read wave energy spectrum               ln_wave_spec = ', ln_wave_spec
       ENDIF
 
       !                                ! option check
@@ -392,6 +395,24 @@ CONTAINS
          &     CALL ctl_warn( 'drag coefficient read from wave model available ONLY with ln_NCAR and ln_MFS aerobulk options')
       IF( ln_stcor .AND. .NOT.ln_sdw )   &
          &     CALL ctl_stop( 'Stokes-Coriolis term calculated only if activated Stokes Drift ln_sdw=T')
+
+      !            !== Check options for wave/sea-ice interactions ==!
+      !
+      ! Unavoidable to do this here due to order of initialisation routines and hence namelist reads.
+      ! Sea-ice namelists -- specifically, namwav for wave-ice interaction module, icewav -- is read
+      ! before namsbc_wave but must check namwav options w.r.t. choice of ln_wave_spec in namsbc_wave.
+      !
+      IF( ln_ice_wav ) THEN
+         !
+         IF( ln_ice_wav_spec .AND. .NOT.ln_wave_spec )   &
+            &   CALL ctl_stop( 'ln_ice_wav_spec=T but spectrum NOT read because ln_wave_spec=F')
+         !
+         ! Warn if spectrum is being read but not used by icewav module (possible to do so, but strange to
+         ! read full wave spectrum and *not* use it for wave breakup, so possibly a user oversight):
+         IF( .NOT.ln_ice_wav_spec .AND. ln_wave_spec )   &
+            &   CALL ctl_warn('ln_ice_wav_spec=F but spectrum IS being read in (ln_wave_spec=T); intentional?')
+         !
+      ENDIF
 
       !                             !==  Allocate wave arrays  ==!
       ALLOCATE( ut0sd (jpi,jpj)    , vt0sd (jpi,jpj) )

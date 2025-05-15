@@ -33,6 +33,7 @@ MODULE icefsd
    PUBLIC ::   ice_fsd_welding            ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_thd_evolve         ! routine called by ice_thd_d{a,o}
    PUBLIC ::   fsd_peri_dens              ! function called by ice_thd_da
+   PUBLIC ::   rDt_ice_fsd                ! function called by ice_wav_frac
 
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rl      !: FSD floe radii, lower bounds of categories (m)
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rc      !: FSD floe radii, centre       of categories (m)

@@ -73,6 +73,7 @@ MODULE sbc_oce
    LOGICAL , PUBLIC ::   ln_breivikFV_2016 !: Breivik 2016 profile
    LOGICAL , PUBLIC ::   ln_vortex_force !: vortex force activation
    LOGICAL , PUBLIC ::   ln_stshear     !: Stoked Drift shear contribution in zdftke
+   LOGICAL , PUBLIC ::   ln_wave_spec   !: =T to read full wave spectrum
    !
    !!----------------------------------------------------------------------
    !!           switch definition (improve readability)
