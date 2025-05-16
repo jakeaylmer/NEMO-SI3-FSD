@@ -131,8 +131,9 @@ MODULE sbccpl
    INTEGER, PARAMETER ::   jpr_icb    = 61
    INTEGER, PARAMETER ::   jpr_ts_ice = 62   ! Sea ice surface temp
    INTEGER, PARAMETER ::   jpr_qtrice = 63   ! Transmitted solar thru sea-ice
+   INTEGER, PARAMETER ::   jpr_wpf    = 64   ! Wave peak frequency
 
-   INTEGER, PARAMETER ::   jprcv      = 63   ! total number of fields received
+   INTEGER, PARAMETER ::   jprcv      = 64   ! total number of fields received
    
    !! sent fields are only in the interior (without halos)
    INTEGER, PARAMETER ::   jps_fice   =  1   ! ice fraction sent to the atmosphere
@@ -202,7 +203,7 @@ MODULE sbccpl
    !                                   ! Send to waves
    TYPE(FLD_C) ::   sn_snd_ifrac, sn_snd_crtw, sn_snd_wlev
    !                                   ! Received from waves
-   TYPE(FLD_C) ::   sn_rcv_hsig, sn_rcv_phioc, sn_rcv_sdrfx, sn_rcv_sdrfy, sn_rcv_wper, sn_rcv_wnum, &
+   TYPE(FLD_C) ::   sn_rcv_hsig, sn_rcv_phioc, sn_rcv_sdrfx, sn_rcv_sdrfy, sn_rcv_wper, sn_rcv_wnum, sn_rcv_wpf, &
       &             sn_rcv_wstrf, sn_rcv_wdrag, sn_rcv_charn, sn_rcv_taw, sn_rcv_bhd, sn_rcv_tusd, sn_rcv_tvsd
    !                                   ! Other namelist parameters
    INTEGER     ::   nn_cplmodel           ! Maximum number of models to/from which NEMO is potentialy sending/receiving data
@@ -280,7 +281,7 @@ CONTAINS
          &                  sn_rcv_charn , sn_rcv_taw   , sn_rcv_bhd  , sn_rcv_tusd  , sn_rcv_tvsd,    &
          &                  sn_rcv_wdrag , sn_rcv_qns   , sn_rcv_emp  , sn_rcv_rnf   , sn_rcv_cal  ,   &
          &                  sn_rcv_iceflx, sn_rcv_co2   , sn_rcv_icb  , sn_rcv_isf   , sn_rcv_ts_ice, sn_rcv_qtrice, &
-         &                  sn_rcv_mslp
+         &                  sn_rcv_mslp  , sn_rcv_wpf
 
       !!---------------------------------------------------------------------
       !
@@ -327,6 +328,7 @@ CONTAINS
          WRITE(numout,*)'      Surface Stokes drift grid v     = ', TRIM(sn_rcv_sdrfy%cldes ), ' (', TRIM(sn_rcv_sdrfy%clcat ), ')'
          WRITE(numout,*)'      Mean wave period                = ', TRIM(sn_rcv_wper%cldes  ), ' (', TRIM(sn_rcv_wper%clcat  ), ')'
          WRITE(numout,*)'      Mean wave number                = ', TRIM(sn_rcv_wnum%cldes  ), ' (', TRIM(sn_rcv_wnum%clcat  ), ')'
+         WRITE(numout,*)'      Wave peak frequency             = ', TRIM(sn_rcv_wpf%cldes   ), ' (', TRIM(sn_rcv_wpf%clcat   ), ')'
          WRITE(numout,*)'      Stress frac adsorbed by waves   = ', TRIM(sn_rcv_wstrf%cldes ), ' (', TRIM(sn_rcv_wstrf%clcat ), ')'
          WRITE(numout,*)'      Neutral surf drag coefficient   = ', TRIM(sn_rcv_wdrag%cldes ), ' (', TRIM(sn_rcv_wdrag%clcat ), ')'
          WRITE(numout,*)'      Charnock coefficient            = ', TRIM(sn_rcv_charn%cldes ), ' (', TRIM(sn_rcv_charn%clcat ), ')'
@@ -359,6 +361,7 @@ CONTAINS
          WRITE(numout,*)'      Surface Stokes drift grid v     = ', TRIM(sn_rcv_sdrfy%cldes ), ' (', TRIM(sn_rcv_sdrfy%clcat ), ')'
          WRITE(numout,*)'      Mean wave period                = ', TRIM(sn_rcv_wper%cldes  ), ' (', TRIM(sn_rcv_wper%clcat  ), ')'
          WRITE(numout,*)'      Mean wave number                = ', TRIM(sn_rcv_wnum%cldes  ), ' (', TRIM(sn_rcv_wnum%clcat  ), ')'
+         WRITE(numout,*)'      Wave peak frequency             = ', TRIM(sn_rcv_wpf%cldes   ), ' (', TRIM(sn_rcv_wpf%clcat   ), ')'
          WRITE(numout,*)'      Stress frac adsorbed by waves   = ', TRIM(sn_rcv_wstrf%cldes ), ' (', TRIM(sn_rcv_wstrf%clcat ), ')'
          WRITE(numout,*)'      Neutral surf drag coefficient   = ', TRIM(sn_rcv_wdrag%cldes ), ' (', TRIM(sn_rcv_wdrag%clcat ), ')'
          WRITE(numout,*)'      Charnock coefficient            = ', TRIM(sn_rcv_charn%cldes ), ' (', TRIM(sn_rcv_charn%clcat ), ')'
@@ -606,6 +609,11 @@ CONTAINS
       IF( TRIM(sn_rcv_wnum%cldes ) == 'coupled' )  THEN
          srcv(nmodsbc)%fld(jpr_wnum)%laction = .TRUE.
          cpl_wnum = .TRUE.
+      ENDIF
+      srcv(nmodsbc)%fld(jpr_wpf)%clname = 'O_Wpfreq'       ! wave peak frequency
+      IF( TRIM(sn_rcv_wpf%cldes ) == 'coupled' )  THEN
+         srcv(nmodsbc)%fld(jpr_wpf)%laction = .TRUE.
+         cpl_wpf = .TRUE.
       ENDIF
       srcv(nmodsbc)%fld(jpr_wstrf)%clname = 'O_WStrf'     ! stress fraction adsorbed by the wave
       IF( TRIM(sn_rcv_wstrf%cldes ) == 'coupled' )  THEN
@@ -1273,6 +1281,26 @@ CONTAINS
           IF( kt == nit000 ) ssh_ibb(1:jpi,1:jpj) = ssh_ib(1:jpi,1:jpj)  ! correct this later (read from restart if possible)
       ENDIF
       !
+      IF( ln_sdw .OR. ln_ice_wav ) THEN   ! Either Stokes drift correction or wave-ice interaction activated
+      !                                                      ! ========================= !
+      !                                                      !  Significant wave height  !
+      !                                                      ! ========================= !
+         IF( srcv(nmodsbc)%fld(jpr_hsig)%laction ) THEN
+            hsw(A2D(0)) = frcv(jpr_hsig)%z3(A2D(0),1)
+            CALL lbc_lnk( 'sbccpl', hsw, 'T', 1.0_wp, ldfull = .TRUE. )
+         ENDIF
+      ENDIF
+      !
+      IF( ln_ice_wav ) THEN   ! Wave-ice interaction activated
+      !                                                      ! ========================= !
+      !                                                      !    Wave peak frequency    !
+      !                                                      ! ========================= !
+         IF( srcv(nmodsbc)%fld(jpr_wpf)%laction ) THEN
+            wpf(A2D(0)) = frcv(jpr_wpf)%z3(A2D(0),1)
+            CALL lbc_lnk( 'sbccpl', wpf, 'T', 1.0_wp, ldfull = .TRUE. )
+         ENDIF
+      ENDIF
+      !
       IF( ln_sdw ) THEN  ! Stokes Drift correction activated
       !                                                      ! ========================= !
       !                                                      !       Stokes drift        !
@@ -1290,15 +1318,6 @@ CONTAINS
             wmp(A2D(0)) = frcv(jpr_wper)%z3(A2D(0),1)
             CALL lbc_lnk( 'sbccpl', wmp, 'T', 1.0_wp, ldfull = .TRUE. )
          ENDIF
-      !
-      !                                                      ! ========================= !
-      !                                                      !  Significant wave height  !
-      !                                                      ! ========================= !
-         IF( srcv(nmodsbc)%fld(jpr_hsig)%laction ) THEN
-            hsw(A2D(0)) = frcv(jpr_hsig)%z3(A2D(0),1)
-            CALL lbc_lnk( 'sbccpl', hsw, 'T', 1.0_wp, ldfull = .TRUE. )
-         ENDIF
-      !
       !                                                      ! ========================= !
       !                                                      !    Vertical mixing Qiao   !
       !                                                      ! ========================= !

@@ -51,22 +51,25 @@ MODULE sbcwave
    LOGICAL, PUBLIC ::   cpl_bhd           = .FALSE.
    LOGICAL, PUBLIC ::   cpl_tusd          = .FALSE.
    LOGICAL, PUBLIC ::   cpl_tvsd          = .FALSE.
+   LOGICAL, PUBLIC ::   cpl_wpf           = .FALSE.
 
    INTEGER ::   jpfld    ! number of files to read for stokes drift
    INTEGER ::   jp_usd   ! index of stokes drift  (i-component) (m/s)    at T-point
    INTEGER ::   jp_vsd   ! index of stokes drift  (j-component) (m/s)    at T-point
-   INTEGER ::   jp_hsw   ! index of significant wave hight      (m)      at T-point
    INTEGER ::   jp_wmp   ! index of mean wave period            (s)      at T-point
 
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_cd      ! structure of input fields (file informations, fields read) Drag Coefficient
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_sd      ! structure of input fields (file informations, fields read) Stokes Drift
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_wn      ! structure of input fields (file informations, fields read) wave number for Qiao
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_tauoc   ! structure of input fields (file informations, fields read) normalized wave stress into the ocean
+   TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_hsw     ! structure of input fields (file informations, fields read) Significant Wave Height
+   TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_wpf     ! structure of input fields (file informations, fields read) Wave Peak Frequency
 
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   cdn_wave        !: Neutral drag coefficient at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   hsw             !: Significant Wave Height at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   wmp             !: Wave Mean Period at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   wnum            !: Wave Number at t-point
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   wpf             !: Wave Peak Frequency at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   tauoc_wave      !: stress reduction factor  at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   tsd2d           !: Surface Stokes Drift module at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   div_sd          !: barotropic stokes drift divergence
@@ -309,12 +312,22 @@ CONTAINS
          WRITE(numout,*) '~~~~~~~~ '
       ENDIF
 
+      IF( ln_ice_wav .AND. .NOT. cpl_wpf ) THEN      !== Peak Frequency ==!
+         CALL fld_read( kt, nn_fsbc, sf_wpf )
+         wpf(:,:) = sf_wpf(1)%fnow(:,:,1) * tmask(:,:,1)  ! wave peak frequency at T point
+      ENDIF
+
+      IF( (ln_sdw .OR. ln_ice_wav) .AND. .NOT. cpl_hsig ) THEN   !== Significant Wave Height ==!
+         CALL fld_read( kt, nn_fsbc, sf_hsw )
+         hsw(:,:) = sf_hsw(1)%fnow(:,:,1) * tmask(:,:,1)  ! significant wave height at T point
+      ENDIF
+
       IF( ln_sdw .AND. .NOT. cpl_sdrftx)  THEN       !==  Computation of the 3d Stokes Drift  ==!
          !
          IF( jpfld > 0 ) THEN                            ! Read from file only if the field is not coupled
             CALL fld_read( kt, nn_fsbc, sf_sd )          ! read wave parameters from external forcing
             !                                            ! NB: test case mode, not read as jpfld=0
-            IF( jp_hsw > 0 )   hsw  (:,:) = sf_sd(jp_hsw)%fnow(:,:,1) * tmask(:,:,1)  ! significant wave height
+            !                                            ! NB: hsw now read separately, above, as also needed by icewav
             IF( jp_wmp > 0 )   wmp  (:,:) = sf_sd(jp_wmp)%fnow(:,:,1) * tmask(:,:,1)  ! wave mean period
             IF( jp_usd > 0 )   ut0sd(:,:) = sf_sd(jp_usd)%fnow(:,:,1) * tmask(:,:,1)  ! 2D zonal Stokes Drift at T point
             IF( jp_vsd > 0 )   vt0sd(:,:) = sf_sd(jp_vsd)%fnow(:,:,1) * tmask(:,:,1)  ! 2D meridional Stokes Drift at T point
@@ -328,7 +341,7 @@ CONTAINS
          ENDIF
  
          !
-         IF( jpfld == 4 .OR. ln_wave_test )   &
+         IF( ((jpfld == 3) .AND. .NOT. cpl_hsig) .OR. ln_wave_test )   &
             &      CALL sbc_stokes( Kmm )                 ! Calculate only if all required fields are read
             !                                            ! or in wave test case
          !  !                                            ! In coupled case the call is done after (in sbc_cpl)
@@ -353,13 +366,13 @@ CONTAINS
       !!
       CHARACTER(len=100)     ::  cn_dir                            ! Root directory for location of drag coefficient files
       TYPE(FLD_N), ALLOCATABLE, DIMENSION(:) ::   slf_i            ! array of namelist informations on the fields to read
-      TYPE(FLD_N)            ::  sn_cdg, sn_usd, sn_vsd,  &
+      TYPE(FLD_N)            ::  sn_cdg, sn_usd, sn_vsd,  sn_wpf,  &
                              &   sn_hsw, sn_wmp, sn_wnum, sn_tauoc    ! informations about the fields to be read
       !
       NAMELIST/namsbc_wave/ cn_dir, sn_cdg, sn_usd, sn_vsd, sn_hsw, sn_wmp, sn_wnum, sn_tauoc,   &
          &                  ln_cdgw, ln_sdw, ln_tauoc, ln_stcor, ln_charn, ln_taw, ln_phioc,     &
          &                  ln_wave_test, ln_bern_srfc, ln_breivikFV_2016, ln_vortex_force,      &
-         &                  ln_stshear, ln_wave_spec
+         &                  ln_stshear, ln_wave_spec, sn_wpf
       !!---------------------------------------------------------------------
       IF(lwp) THEN
          WRITE(numout,*)
@@ -389,8 +402,8 @@ CONTAINS
       ENDIF
 
       !                                ! option check
-      IF( .NOT.( ln_cdgw .OR. ln_sdw .OR. ln_tauoc .OR. ln_stcor .OR. ln_charn) )   &
-         &     CALL ctl_warn( 'Ask for wave coupling but ln_cdgw=F, ln_sdw=F, ln_tauoc=F, ln_stcor=F')
+      IF( .NOT.( ln_cdgw .OR. ln_sdw .OR. ln_tauoc .OR. ln_stcor .OR. ln_charn .OR. ln_ice_wav ) )   &
+         &     CALL ctl_warn( 'Ask for wave coupling but ln_cdgw=F, ln_sdw=F, ln_tauoc=F, ln_stcor=F, ln_ice_wav=F')
       IF( ln_cdgw .AND. ln_blk )   &
          &     CALL ctl_warn( 'drag coefficient read from wave model available ONLY with ln_NCAR and ln_MFS aerobulk options')
       IF( ln_stcor .AND. .NOT.ln_sdw )   &
@@ -416,7 +429,7 @@ CONTAINS
 
       !                             !==  Allocate wave arrays  ==!
       ALLOCATE( ut0sd (jpi,jpj)    , vt0sd (jpi,jpj) )
-      ALLOCATE( hsw   (jpi,jpj)    , wmp   (jpi,jpj) )
+      ALLOCATE( hsw   (jpi,jpj)    , wmp   (jpi,jpj)    , wpf     (jpi,jpj)     )
       ALLOCATE( tsd2d (jpi,jpj)    , div_sd(jpi,jpj)    , bhd_wave(jpi,jpj)     )
       ALLOCATE( usd   (jpi,jpj,jpk), vsd   (jpi,jpj,jpk), wsd     (jpi,jpj,jpk) )
       ALLOCATE( tusd  (jpi,jpj)    , tvsd  (jpi,jpj) )
@@ -426,6 +439,7 @@ CONTAINS
       wsd   (:,:,:) = 0._wp
       hsw     (:,:) = 0._wp
       wmp     (:,:) = 0._wp
+      wpf     (:,:) = 0._wp
       ut0sd   (:,:) = 0._wp
       vt0sd   (:,:) = 0._wp
       tusd    (:,:) = 0._wp
@@ -441,6 +455,7 @@ CONTAINS
          vt0sd(:,:) = 0.00_wp                  ! m/s
          hsw  (:,:) = 2.80_wp                  ! meters
          wmp  (:,:) = 8.00_wp                  ! seconds
+         wpf  (:,:) = 0.08_wp                  ! Hz
          !
       ELSE                          !==  create the structure associated with fields to be read  ==!
          IF( ln_cdgw ) THEN                       ! wave drag
@@ -501,10 +516,31 @@ CONTAINS
             tauoc_wave(:,:) = 0._wp
          ENDIF
 
+         IF( ln_ice_wav ) THEN                  ! wave peak frequency (currently, needed for wave-ice interactions only)
+            IF( .NOT. cpl_wpf ) THEN
+               ALLOCATE( sf_wpf(1), STAT=ierror )           !* allocate and fill sf_wpf with sn_wpf
+               IF( ierror > 0 )   CALL ctl_stop( 'STOP', 'sbc_wave_init: unable to allocate sf_wpf structure' )
+               ALLOCATE( sf_wpf(1)%fnow(jpi,jpj,1) )
+               IF( sn_wpf%ln_tint ) ALLOCATE( sf_wpf(1)%fdta(jpi,jpj,1,2) )
+               CALL fld_fill( sf_wpf, (/ sn_wpf /), cn_dir, 'sbc_wave', 'Wave module', 'namsbc_wave' )
+            ENDIF
+         ENDIF
+
+         IF( ln_sdw .OR. ln_ice_wav ) THEN      ! significant wave height
+            IF( .NOT. cpl_hsig ) THEN
+               ALLOCATE( sf_hsw(1), STAT=ierror )           !* allocate and fill sf_hsw with sn_hsw
+               IF( ierror > 0 )   CALL ctl_stop( 'STOP', 'sbc_wave_init: unable to allocate sf_hsw structure' )
+               ALLOCATE( sf_hsw(1)%fnow(jpi,jpj,1) )
+               IF( sn_hsw%ln_tint ) ALLOCATE( sf_hsw(1)%fdta(jpi,jpj,1,2) )
+               CALL fld_fill( sf_hsw, (/ sn_hsw /), cn_dir, 'sbc_wave', 'Wave module', 'namsbc_wave' )
+            ENDIF
+         ENDIF
+
          IF( ln_sdw ) THEN                      ! Stokes drift
             ! 1. Find out how many fields have to be read from file if not coupled
-            jpfld=0
-            jp_usd=0   ;   jp_vsd=0   ;   jp_hsw=0   ;   jp_wmp=0
+            !    (NB. hsw now done separately, above, as it is also needed by icewav, not just sdw)
+            jpfld = 0
+            jp_usd=0   ;   jp_vsd=0   ;   jp_wmp=0
             IF( .NOT. cpl_sdrftx ) THEN
                jpfld  = jpfld + 1
                jp_usd = jpfld
@@ -512,10 +548,6 @@ CONTAINS
             IF( .NOT. cpl_sdrfty ) THEN
                jpfld  = jpfld + 1
                jp_vsd = jpfld
-            ENDIF
-            IF( .NOT. cpl_hsig ) THEN
-               jpfld  = jpfld + 1
-               jp_hsw = jpfld
             ENDIF
             IF( .NOT. cpl_wper ) THEN
                jpfld  = jpfld + 1
@@ -526,7 +558,6 @@ CONTAINS
                ALLOCATE( slf_i(jpfld) )
                IF( jp_usd > 0 )   slf_i(jp_usd) = sn_usd
                IF( jp_vsd > 0 )   slf_i(jp_vsd) = sn_vsd
-               IF( jp_hsw > 0 )   slf_i(jp_hsw) = sn_hsw
                IF( jp_wmp > 0 )   slf_i(jp_wmp) = sn_wmp
                ALLOCATE( sf_sd(jpfld), STAT=ierror )   !* allocate and fill sf_sd with stokes drift
                IF( ierror > 0 )   CALL ctl_stop( 'STOP', 'sbc_wave_init: unable to allocate sf_wave structure' )

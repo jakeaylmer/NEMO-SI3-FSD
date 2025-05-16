@@ -374,6 +374,7 @@
    sn_rcv_sdrfy  =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_wper   =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_wnum   =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
+   sn_rcv_wpf    =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_wstrf  =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_wdrag  =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_charn  =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
@@ -606,6 +607,7 @@
    sn_hsw      =  'sdw_ecwaves_orca2'    ,        6.         , 'hs'         ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
    sn_wmp      =  'sdw_ecwaves_orca2'    ,        6.         , 'wmp'        ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
    sn_wnum     =  'sdw_ecwaves_orca2'    ,        6.         , 'wave_num'   ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
+   sn_wpf      =  'sdw_ecwaves_orca2'    ,        6.         , 'wfr'        ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
    sn_tauoc    =  'sdw_ecwaves_orca2'    ,        6.         , 'wave_stress',  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
 /
 !-----------------------------------------------------------------------
