@@ -44,6 +44,7 @@ MODULE icefsd
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_au      !: FSD floe areas, floes of radii floe_ru (m2)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_dlog_rc !: FSD cat. centre spacing in log(radius) space
    INTEGER ,         ALLOCATABLE, DIMENSION(:,:) :: floe_iweld   !: index of FSD cat. two given FSD cats. can weld to
+   INTEGER , PUBLIC                              :: nf_newice    !: index of FSD cat. for new ice in absence of waves (m)
 
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:,:) ::   a_ifsd      !: FSD per ice thickness category
    REAL(wp), PUBLIC, ALLOCATABLE, SAVE, DIMENSION(:,:,:)   ::   a_ifsd_2d   !: Reduced-dimension version of a_ifsd for thermodynamic routines
@@ -52,6 +53,7 @@ MODULE icefsd
    ! ** namelist (namfsd) **
    INTEGER  ::   nn_fsd_ini         ! FSD init. options (0 = none; 1 = all in largest FSD cat; 2 = imposed power law)
    REAL(wp) ::   rn_fsd_ini_alpha   ! Parameter used for power law initial FSD with nn_icefsd_ini = 2 only
+   REAL(wp) ::   rn_fsd_r_newice    ! Floe size of new ice in absence of wave field [m]
    REAL(wp) ::   rn_fsd_t_restore   ! FSD restoring timescale [s]
    REAL(wp) ::   rn_fsd_amin_weld   ! Minimum concentration required for floe welding to take effect
    REAL(wp) ::   rn_fsd_c_weld      ! Floe welding coefficient [m-2.s-1]
@@ -283,7 +285,7 @@ CONTAINS
    END SUBROUTINE ice_fsd_partition_newice
 
 
-   SUBROUTINE ice_fsd_add_newice( pa_ifsd, pa_newice, pa_i_before )
+   SUBROUTINE ice_fsd_add_newice( pa_ifsd, pa_newice, pa_i_before, kcat )
       !!-------------------------------------------------------------------
       !!                ***  ROUTINE ice_fsd_add_newice  ***
       !!
@@ -298,6 +300,7 @@ CONTAINS
       !!                pa_newice        : area fraction of new ice formation
       !!                pa_i_before      : ice concentration *after* lateral growth
       !!                                   but *before* new ice growth at 1-D array
+      !!                kcat             : floe size category index to add new ice to
       !!
       !! ** Note    :   This routine only updates the floe size distribution,
       !!                not ice concentration a_i, which is done in ice_thd_do
@@ -309,6 +312,7 @@ CONTAINS
       REAL(wp)                    , INTENT(in)    ::   pa_i_before   ! a_i after lat. growth of
       !                                                              ! existing ice but before addition
       !                                                              ! of pa_newice
+      INTEGER                     , INTENT(in)    ::   kcat          ! FSD category index for new ice
       !
       INTEGER ::   jf   ! dummy loop index
       !
@@ -317,26 +321,26 @@ CONTAINS
       IF( pa_newice > 0._wp ) THEN
          IF( SUM(pa_ifsd(:)) > epsi10 ) THEN
             !
-            ! --- Add new ice to smallest floe size category
+            ! --- Add new ice to specified floe size category
             !
-            ! The area fraction of ice in the smallest floe size category, r0,
+            ! The area fraction of ice in this floe size category, rk,
             ! and thickness category to which new ice is added, h, is:
             !
-            !    [ L(r0,h)g(h)drdh ]_before = pa_ifsd(1) * pa_i_before
+            !    [ L(rk,h)g(h)drdh ]_before = pa_ifsd(kf) * pa_i_before
             !
             ! before addition of pa_newice. Then, after addition of new ice:
             !
-            !    [ L(r0,h)g(h)drdh ]_after = [ L(r0,h)g(h)drdh ]_before + pa_newice
+            !    [ L(rk,h)g(h)drdh ]_after = [ L(rk,h)g(h)drdh ]_before + pa_newice
             !
-            ! g(h) is already updated in ice_thd_do, but L(r0,h) needs updating
+            ! g(h) is already updated in ice_thd_do, but L(rk,h) needs updating
             ! too, achieved by rearranging the above. This is why it is necessary
             ! to pass pa_i_before to this routine rather than just using a_i_2d.
             !
-            pa_ifsd(1) = (pa_ifsd(1)*pa_i_before + pa_newice) / (pa_i_before + pa_newice)
+            pa_ifsd(kcat) = (pa_ifsd(kcat)*pa_i_before + pa_newice) / (pa_i_before + pa_newice)
 
             ! --- Adjust other floe size categories
             !
-            ! New ice area is only added to one floe size category, r0.
+            ! New ice area is only added to one floe size category, rk.
             ! So for the remaining floe size categories, r:
             !
             !    [ L(r,h)g(h)drdh ]_after = [ L(r,h)g(h)drdh ]_before
@@ -344,16 +348,15 @@ CONTAINS
             ! Since g(h)_before /= g(h)_after, L(r,h)_before /= L(r,h)_after.
             ! Rearranging gives L(r,h)_after and is thus updated:
             !
-            DO jf = 2, nn_nfsd
-               pa_ifsd(jf) = pa_ifsd(jf)*pa_i_before / (pa_i_before + pa_newice)
+            DO jf = 1, nn_nfsd
+               IF( jf /= kcat ) pa_ifsd(jf) = pa_ifsd(jf)*pa_i_before / (pa_i_before + pa_newice)
             ENDDO
 
          ELSE
             !
-            ! --- Entirely new ice: put in smallest floe size category and
-            !     specified thickness category:
-            pa_ifsd(1        ) = 1._wp
-            pa_ifsd(2:nn_nfsd) = 0._wp
+            ! --- Entirely new ice: put in specified floe size category:
+            pa_ifsd(:)  = 0._wp
+            pa_ifsd(kcat) = 1._wp
 
          ENDIF
       ENDIF
@@ -1057,6 +1060,15 @@ CONTAINS
       floe_ac = 4._wp * rn_floeshape * floe_rc ** 2
       floe_au = 4._wp * rn_floeshape * floe_ru ** 2
 
+      ! --- Calculate category index of default new ice floe size set in namelist
+      nf_newice = nn_nfsd
+      DO jf1 = nn_nfsd-1, 1, -1
+         IF( (rn_fsd_r_newice >= floe_rl(jf1)) .AND. (rn_fsd_r_newice < floe_ru(jf1)) ) THEN
+            nf_newice = jf1
+            EXIT
+         ENDIF
+      ENDDO
+
       ! --- Calculate floe welding array, floe_iweld
       ! floe_iweld(jf1,jf2) = index of FSD category that floes in category jf1,
       ! when welded with floes in category jf2, subsequently belong to
@@ -1232,7 +1244,7 @@ CONTAINS
       INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
       !!
       NAMELIST/namfsd/ ln_fsd, nn_nfsd, rn_floeshape, nn_fsd_ini, rn_fsd_ini_alpha,   &
-         &             rn_fsd_amin_weld, rn_fsd_c_weld, rn_fsd_t_restore
+         &             rn_fsd_r_newice, rn_fsd_amin_weld, rn_fsd_c_weld, rn_fsd_t_restore
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namfsd)
@@ -1249,6 +1261,7 @@ CONTAINS
          WRITE(numout,*) '         Floe shape parameter                              rn_floeshape = ', rn_floeshape
          WRITE(numout,*) '         FSD initialisation case                             nn_fsd_ini = ', nn_fsd_ini
          WRITE(numout,*) '            Power law exponent (nn_fsd_ini = 2 only)   rn_fsd_ini_alpha = ', rn_fsd_ini_alpha
+         WRITE(numout,*) '         Floe size of new ice (in absence of waves)    rn_fsd_r_newice  = ', rn_fsd_r_newice
          WRITE(numout,*) '         Floe welding minimum sea ice concentration    rn_fsd_amin_weld = ', rn_fsd_amin_weld
          WRITE(numout,*) '         Floe welding coefficient                         rn_fsd_c_weld = ', rn_fsd_c_weld
          WRITE(numout,*) '         FSD restoring (brittle fracture) time scale   rn_fsd_t_restore = ', rn_fsd_t_restore

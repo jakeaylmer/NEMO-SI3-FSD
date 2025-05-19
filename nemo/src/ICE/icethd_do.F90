@@ -20,6 +20,7 @@ MODULE icethd_do
    USE ice1D          ! sea-ice: thermodynamics variables
    USE ice            ! sea-ice: variables
    USE sbc_oce , ONLY : sss_m
+   USE sbcwave , ONLY : hsw, wpf
    USE sbc_ice , ONLY : utau_ice, vtau_ice
    USE icetab         ! sea-ice: 2D <==> 1D
    USE icectl         ! sea-ice: conservation
@@ -27,7 +28,8 @@ MODULE icethd_do
    USE icethd_sal     ! sea-ice: salinity profiles
    USE icefsd  , ONLY : ice_fsd_partition_newice, ice_fsd_add_newice,   &
       &                 ice_fsd_thd_evolve      , ice_fsd_welding   ,   &
-      &                 a_ifsd, a_ifsd_2d
+      &                 a_ifsd, a_ifsd_2d, nf_newice
+   USE icewav  , ONLY : ice_wav_newice
    USE in_out_manager ! I/O manager
    USE lib_mpp        ! MPP library
    USE timing         ! Timing
@@ -112,6 +114,10 @@ CONTAINS
       REAL(wp), DIMENSION(jpl) ::   zv_latgro_cat     ! fsd: lateral growth volume in cat. jl
       REAL(wp)                 ::   zv_latgro         ! fsd: lateral growth volume, total
       REAL(wp)                 ::   zv_newice_total   ! fsd: new ice + lat. growth, used when updating e_i and szv_i
+      INTEGER                  ::   jcat_fsd          ! fsd: new ice floe size category
+      !
+      REAL(wp), DIMENSION(jpij) ::   zhsw_1d          ! fsd + waves: significant wave height, 1D array for loop
+      REAL(wp), DIMENSION(jpij) ::   zwpf_1d          ! fsd + waves: wave peak frequency, 1D array for loop
       !
       !!-----------------------------------------------------------------------!
       !
@@ -165,6 +171,16 @@ CONTAINS
          CALL tab_2d_1d( npti, nptidx(1:npti), sss_1d    (1:npti), sss_m      )
 
          IF( ln_fsd ) CALL tab_4d_3d( npti, nptidx(1:npti), a_ifsd_2d(1:npti,:,:), a_ifsd )
+
+         IF (ln_ice_wav) THEN
+            !
+            ! Wave-ice interactions: wave fields (hsw, wpf) determine floe size of new ice
+            ! so need these in 1D arrays for main loop. However, neither hsw nor wpf are
+            ! themselves affected here, so there is no need to swap back to 2-D at the end.
+            !
+            CALL tab_2d_1d( npti, nptidx(1:npti), zhsw_1d(1:npti), hsw )
+            CALL tab_2d_1d( npti, nptidx(1:npti), zwpf_1d(1:npti), wpf )
+         ENDIF
 
          ! Convert units for ice internal energy and salt content
          DO jl = 1, jpl
@@ -326,7 +342,20 @@ CONTAINS
             ! recover the correct value using za_b (a_i_2d at beginning of ice_thd_do)
             ! and zda_latgro (FSD lateral area growth per thickness category):
             !
-            IF( ln_fsd ) CALL ice_fsd_add_newice( a_ifsd_2d(ii,:,jcat), za_newice, za_b(jcat) + zda_latgro(jcat) )
+            IF (ln_fsd ) THEN
+               !
+               ! Floe size category that new ice is added to, jcat_fsd, can be modified by
+               ! ocean waves if ln_ice_wav=T, else it is set in FSD module (nf_newice):
+               !
+               jcat_fsd = nf_newice
+               IF( ln_ice_wav ) CALL ice_wav_newice( zhsw_1d(ii), zwpf_1d(ii), jcat_fsd )
+               !
+               IF(lwp) WRITE(numout,*) 'New ice FSD category =', jcat_fsd
+               !
+               CALL ice_fsd_add_newice( a_ifsd_2d(ii,:,jcat)         , za_newice,   &
+                  &                     za_b(jcat) + zda_latgro(jcat), jcat_fsd     )
+               !
+            ENDIF
 
             ! Heat content
             !

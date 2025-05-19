@@ -22,10 +22,10 @@ MODULE icewav
    USE par_ice           ! SI3 parameters
    USE phycst , ONLY :   rpi, grav, rhoi
    USE sbc_oce, ONLY :   ln_wave, ln_wave_spec   ! SBC: wave module
-   USE sbcwave, ONLY :   hsw                     ! SBC: wave variables
+   USE sbcwave, ONLY :   hsw, wpf                ! SBC: wave variables
    USE ice               ! sea-ice: variables
-   USE icefsd , ONLY :   a_ifsd                  ! floe size distribution parameters/variables
-   USE icefsd , ONLY :   rDt_ice_fsd             ! floe size distribution functions/routines
+   USE icefsd , ONLY :   a_ifsd, nf_newice, floe_rl   ! floe size distribution parameters/variables
+   USE icefsd , ONLY :   rDt_ice_fsd                  ! floe size distribution functions/routines
 
    USE in_out_manager    ! I/O manager (needed for lwm and lwp logicals)
    USE iom               ! I/O manager library (needed for iom_put)
@@ -39,13 +39,13 @@ MODULE icewav
    PUBLIC ::   ice_wav_frac     ! routine called by ice_stp
    PUBLIC ::   ice_wav_init     ! routine called by ice_init
 
-   REAL, ALLOCATABLE, SAVE, DIMENSION(:) ::   x1d   ! 1D subdomain for wave fracture
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:) ::   x1d   ! 1D subdomain for wave fracture
 
    !                                     !!* namelist (namwav) *
    LOGICAL         ::   ln_ice_wav_rand   !: Use random phases for sea surface height in wave fracture calculation
    INTEGER         ::   nn_ice_wav_nx1d   !: Size of 1D subdomain for wave fracture calculation
-   REAL            ::   rn_ice_wav_dx1d   !: Increment of 1D subdomain for wave fracture calculation (meters)
-   REAL            ::   rn_ice_wav_ecri   !: Critical strain at which ice fractures due to waves (dimensionless)
+   REAL(wp)        ::   rn_ice_wav_dx1d   !: Increment of 1D subdomain for wave fracture calculation (meters)
+   REAL(wp)        ::   rn_ice_wav_ecri   !: Critical strain at which ice fractures due to waves (dimensionless)
    !
    ! Note: other namwav parameters declared in par_ice as they are needed by module
    ! ----- sbcwave which cannot access this module (would create circular dependency)
@@ -57,7 +57,7 @@ MODULE icewav
 CONTAINS
 
 
-   SUBROUTINE ice_wav_newice( phsw, pwpf, kf )
+   SUBROUTINE ice_wav_newice( phsw, pwpf, kcat )
       !!-------------------------------------------------------------------
       !!                 *** ROUTINE ice_wav_newice ***
       !!
@@ -90,7 +90,7 @@ CONTAINS
       !! ** Inputs  :   phsw : local significant wave height (m)
       !!                pwpf : local wave frequency of peak energy (Hz)
       !!
-      !! ** Outputs :   kf   : integer index of floe size distribution category
+      !! ** Outputs :   kcat : integer index of floe size distribution category
       !!                       to which new ice formation is added
       !!
       !! ** Callers :   ice_thd_do -> [ice_wav_newice]
@@ -103,13 +103,46 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp), INTENT(in)  ::   phsw   ! local significant wave height (m)
-      REAL(wp), INTENT(in)  ::   pwpf   ! local wave peak frequency (s-1)
-      INTEGER , INTENT(out) ::   kf     ! FSD category index for new ice growth
+      REAL(wp), INTENT(in)    ::   phsw   ! local significant wave height (m)
+      REAL(wp), INTENT(in)    ::   pwpf   ! local wave peak frequency (Hz)
+      INTEGER , INTENT(inout) ::   kcat   ! FSD category index for new ice growth
       !
-      REAL(wp), PARAMETER   ::   zC2 = 0.167_wp   ! tensile mode stress parameter (kg.m-1.s-2)
+      REAL(wp), PARAMETER ::   zC2 = .167_wp   ! tensile mode stress parameter (kg.m-1.s-2)
+      REAL(wp)            ::   zrmax           ! maximum new ice floe size (m)
+      INTEGER             ::   jf              ! dummy loop index
       !
       !!-------------------------------------------------------------------
+
+      IF( phsw < epsi06 ) THEN
+         !
+         kcat = nf_newice   ! no waves present => set to default new floe size category
+         !
+      ELSE
+         !
+         ! --- Calculate maximum floe size from wave conditions, r_max:
+         zrmax = SQRT( zC2 * grav / (rpi * rhoi * phsw) ) / (2._wp * rpi**2 * pwpf**2)
+         !
+         ! --- Find FSD category that r_max belongs to:
+         !
+         IF( zrmax < floe_rl(1) ) THEN
+            ! Smaller than smallest 'resolved' floe size => put in smallest cat. anyway:
+            kcat = 1
+            !
+         ELSE
+            ! Find FSD category that r_max belongs to. Note that if r_max exceeds upper
+            ! limit of largest floe size category, it goes into that category anyway:
+            !
+            DO jf = nn_nfsd, 1, -1
+               IF( zrmax > floe_rl(jf) ) THEN
+                  kcat = jf
+                  EXIT   ! found kcat => stop iterating
+               ENDIF
+            ENDDO
+            !
+         ENDIF
+         !
+      ENDIF
+
    END SUBROUTINE ice_wav_newice
 
 
