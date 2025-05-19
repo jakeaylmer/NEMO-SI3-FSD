@@ -312,14 +312,16 @@ CONTAINS
          WRITE(numout,*) '~~~~~~~~ '
       ENDIF
 
-      IF( ln_ice_wav .AND. .NOT. cpl_wpf ) THEN      !== Peak Frequency ==!
-         CALL fld_read( kt, nn_fsbc, sf_wpf )
-         wpf(:,:) = sf_wpf(1)%fnow(:,:,1) * tmask(:,:,1)  ! wave peak frequency at T point
-      ENDIF
+      IF( .NOT. ln_wave_test ) THEN
+         IF( ln_ice_wav .AND. .NOT. cpl_wpf ) THEN      !== Peak Frequency ==!
+            CALL fld_read( kt, nn_fsbc, sf_wpf )
+            wpf(:,:) = sf_wpf(1)%fnow(:,:,1) * tmask(:,:,1)  ! wave peak frequency at T point
+         ENDIF
 
-      IF( (ln_sdw .OR. ln_ice_wav) .AND. .NOT. cpl_hsig ) THEN   !== Significant Wave Height ==!
-         CALL fld_read( kt, nn_fsbc, sf_hsw )
-         hsw(:,:) = sf_hsw(1)%fnow(:,:,1) * tmask(:,:,1)  ! significant wave height at T point
+         IF( (ln_sdw .OR. ln_ice_wav) .AND. .NOT. cpl_hsig ) THEN   !== Significant Wave Height ==!
+            CALL fld_read( kt, nn_fsbc, sf_hsw )
+            hsw(:,:) = sf_hsw(1)%fnow(:,:,1) * tmask(:,:,1)  ! significant wave height at T point
+         ENDIF
       ENDIF
 
       IF( ln_sdw .AND. .NOT. cpl_sdrftx)  THEN       !==  Computation of the 3d Stokes Drift  ==!
