@@ -113,7 +113,7 @@ CONTAINS
       !
       !!-------------------------------------------------------------------
 
-      IF( phsw < epsi06 ) THEN
+      IF( (phsw < epsi06) .OR. (pwpf < epsi06) ) THEN
          !
          kcat = nf_newice   ! no waves present => set to default new floe size category
          !
