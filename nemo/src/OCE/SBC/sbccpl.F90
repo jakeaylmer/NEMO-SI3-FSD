@@ -132,8 +132,9 @@ MODULE sbccpl
    INTEGER, PARAMETER ::   jpr_ts_ice = 62   ! Sea ice surface temp
    INTEGER, PARAMETER ::   jpr_qtrice = 63   ! Transmitted solar thru sea-ice
    INTEGER, PARAMETER ::   jpr_wpf    = 64   ! Wave peak frequency
+   INTEGER, PARAMETER ::   jpr_wspec  = 65   ! Wave energy spectrum
 
-   INTEGER, PARAMETER ::   jprcv      = 64   ! total number of fields received
+   INTEGER, PARAMETER ::   jprcv      = 65   ! total number of fields received
    
    !! sent fields are only in the interior (without halos)
    INTEGER, PARAMETER ::   jps_fice   =  1   ! ice fraction sent to the atmosphere
@@ -204,7 +205,8 @@ MODULE sbccpl
    TYPE(FLD_C) ::   sn_snd_ifrac, sn_snd_crtw, sn_snd_wlev
    !                                   ! Received from waves
    TYPE(FLD_C) ::   sn_rcv_hsig, sn_rcv_phioc, sn_rcv_sdrfx, sn_rcv_sdrfy, sn_rcv_wper, sn_rcv_wnum, sn_rcv_wpf, &
-      &             sn_rcv_wstrf, sn_rcv_wdrag, sn_rcv_charn, sn_rcv_taw, sn_rcv_bhd, sn_rcv_tusd, sn_rcv_tvsd
+      &             sn_rcv_wstrf, sn_rcv_wdrag, sn_rcv_charn, sn_rcv_taw, sn_rcv_bhd, sn_rcv_tusd, sn_rcv_tvsd,  &
+      &             sn_rcv_wspec
    !                                   ! Other namelist parameters
    INTEGER     ::   nn_cplmodel           ! Maximum number of models to/from which NEMO is potentialy sending/receiving data
    LOGICAL     ::   ln_usecplmask         !  use a coupling mask file to merge data received from several models
@@ -281,7 +283,7 @@ CONTAINS
          &                  sn_rcv_charn , sn_rcv_taw   , sn_rcv_bhd  , sn_rcv_tusd  , sn_rcv_tvsd,    &
          &                  sn_rcv_wdrag , sn_rcv_qns   , sn_rcv_emp  , sn_rcv_rnf   , sn_rcv_cal  ,   &
          &                  sn_rcv_iceflx, sn_rcv_co2   , sn_rcv_icb  , sn_rcv_isf   , sn_rcv_ts_ice, sn_rcv_qtrice, &
-         &                  sn_rcv_mslp  , sn_rcv_wpf
+         &                  sn_rcv_mslp  , sn_rcv_wpf   , sn_rcv_wspec
 
       !!---------------------------------------------------------------------
       !
@@ -332,6 +334,7 @@ CONTAINS
          WRITE(numout,*)'      Stress frac adsorbed by waves   = ', TRIM(sn_rcv_wstrf%cldes ), ' (', TRIM(sn_rcv_wstrf%clcat ), ')'
          WRITE(numout,*)'      Neutral surf drag coefficient   = ', TRIM(sn_rcv_wdrag%cldes ), ' (', TRIM(sn_rcv_wdrag%clcat ), ')'
          WRITE(numout,*)'      Charnock coefficient            = ', TRIM(sn_rcv_charn%cldes ), ' (', TRIM(sn_rcv_charn%clcat ), ')'
+         WRITE(numout,*)'      Wave energy spectrum            = ', TRIM(sn_rcv_wspec%cldes ), ' (', TRIM(sn_rcv_wspec%clcat ), ')'
          WRITE(numout,*)'  sent fields (multiple ice categories)'
          WRITE(numout,*)'      surface temperature             = ', TRIM(sn_snd_temp%cldes  ), ' (', TRIM(sn_snd_temp%clcat  ), ')'
          WRITE(numout,*)'      top ice layer temperature       = ', TRIM(sn_snd_ttilyr%cldes), ' (', TRIM(sn_snd_ttilyr%clcat), ')'
@@ -369,6 +372,7 @@ CONTAINS
          WRITE(numout,*)' Transport associated to Stokes drift v = ', TRIM(sn_rcv_tvsd%cldes ), ' (', TRIM(sn_rcv_tvsd%clcat ), ')'
          WRITE(numout,*)'      Bernouilli pressure head        = ', TRIM(sn_rcv_bhd%cldes   ), ' (', TRIM(sn_rcv_bhd%clcat  ), ')'
          WRITE(numout,*)'Wave to ocean momentum flux and Net wave-supported stress = ', TRIM(sn_rcv_taw%cldes ), ' (', TRIM(sn_rcv_taw%clcat ), ')'
+         WRITE(numout,*)'      Wave energy spectrum            = ', TRIM(sn_rcv_wspec%cldes ), ' (', TRIM(sn_rcv_wspec%clcat ), ')'
          WRITE(numout,*)'      Surface current to waves        = ', TRIM(sn_snd_crtw%cldes  ), ' (', TRIM(sn_snd_crtw%clcat  ), ')'
          WRITE(numout,*)'                      - referential   = ', sn_snd_crtw%clvref
          WRITE(numout,*)'                      - orientation   = ', sn_snd_crtw%clvor
@@ -644,6 +648,23 @@ CONTAINS
       IF( TRIM(sn_rcv_tvsd%cldes ) == 'coupled' )  THEN
          srcv(nmodsbc)%fld(jpr_tvsd)%laction = .TRUE.
          cpl_tvsd = .TRUE.
+      ENDIF
+      srcv(nmodsbc)%fld(jpr_wspec)%clname = 'O_WSpec'   ! Wave energy spectrum
+      !
+      srcv(nmodsbc)%fld(jpr_wspec)%nlvl = nn_nwfreq     ! Not sure if this is the right approach. nlvl = 1 for everything else and
+      !                                                 ! is labelled as being number of depth levels for 3D coupling in cpl_oasis.F90.
+      !                                                 ! E.g., with nlvl /= jpk, will this somehow/somewhere try to interpolate to the
+      !                                                 ! ocean vertical levels?
+      !                                                 !
+      !                                                 ! There is also 'nct' used for multiple ice categories, which is more like what
+      !                                                 ! is needed for frequency dimension here, but that is capped at 5 and not clear
+      !                                                 ! if it can be used here even if the cap is raised. For now, leave this as a
+      !                                                 ! a placeholder means of accounting for extra dimension; will need to be
+      !                                                 ! tested later with coupling activated/further investigation.
+      !
+      IF( TRIM(sn_rcv_wspec%cldes) == 'coupled' ) THEN
+         srcv(nmodsbc)%fld(jpr_wspec)%laction = .TRUE.
+         cpl_wspec = .TRUE.
       ENDIF
 
       srcv(nmodsbc)%fld(jpr_twox)%clname = 'O_Twox'     ! wave to ocean momentum flux in the u direction
@@ -1375,6 +1396,13 @@ CONTAINS
          tusd(A2D(0)) = frcv(jpr_tusd)%z3(A2D(0),1)
          tvsd(A2D(0)) = frcv(jpr_tvsd)%z3(A2D(0),1)
          CALL lbc_lnk( 'sbccpl', tusd, 'T', -1.0_wp, tvsd, 'T', -1.0_wp, ldfull = .TRUE. )
+      ENDIF
+      !                                                      ! ========================= !
+      !                                                      !   Wave energy spectrum    !
+      !                                                      ! ========================= !
+      IF( srcv(nmodsbc)%fld(jpr_wspec)%laction .AND. ln_wave_spec ) THEN
+         wspec(A2D(0),:) = frcv(jpr_wspec)%z3(A2D(0),:)
+            CALL lbc_lnk( 'sbccpl', wspec, 'T', 1.0_wp, ldfull = .TRUE. )
       ENDIF
       !
       !  Fields received by SAS when OASIS coupling

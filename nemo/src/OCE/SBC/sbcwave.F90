@@ -52,6 +52,7 @@ MODULE sbcwave
    LOGICAL, PUBLIC ::   cpl_tusd          = .FALSE.
    LOGICAL, PUBLIC ::   cpl_tvsd          = .FALSE.
    LOGICAL, PUBLIC ::   cpl_wpf           = .FALSE.
+   LOGICAL, PUBLIC ::   cpl_wspec         = .FALSE.
 
    INTEGER ::   jpfld    ! number of files to read for stokes drift
    INTEGER ::   jp_usd   ! index of stokes drift  (i-component) (m/s)    at T-point
@@ -64,6 +65,7 @@ MODULE sbcwave
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_tauoc   ! structure of input fields (file informations, fields read) normalized wave stress into the ocean
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_hsw     ! structure of input fields (file informations, fields read) Significant Wave Height
    TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_wpf     ! structure of input fields (file informations, fields read) Wave Peak Frequency
+   TYPE(FLD), ALLOCATABLE, DIMENSION(:) ::   sf_wspec   ! structure of input fields (file informations, fields read) Wave Energy Spectrum
 
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   cdn_wave        !: Neutral drag coefficient at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   hsw             !: Significant Wave Height at t-point
@@ -75,6 +77,12 @@ MODULE sbcwave
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   div_sd          !: barotropic stokes drift divergence
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   ut0sd, vt0sd    !: surface Stokes drift velocities at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:,:) ::   usd, vsd, wsd   !: Stokes drift velocities at u-, v- & w-points, resp.u
+!
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)     ::   wfreq_l         !: Wave frequencies for discretised energy spectrum (lower limits of bins)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)     ::   wfreq           !: Wave frequencies for discretised energy spectrum ('center' of bins)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)     ::   wfreq_u         !: Wave frequencies for discretised energy spectrum (upper limits of bins)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)     ::   wdfreq          !: Wave frequencies for discretised energy spectrum (bin widths)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:,:) ::   wspec           !: Wave energy spectrum (function of frequency) at t-point
 !
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   charn           !: charnock coefficient at t-point
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:,:)   ::   tawx            !: Net wave-supported stress, u
@@ -313,6 +321,11 @@ CONTAINS
       ENDIF
 
       IF( .NOT. ln_wave_test ) THEN
+         IF( ln_wave_spec .AND. .NOT. cpl_wspec ) THEN  !== Wave energy spectrum ==!
+            CALL fld_read( kt, nn_fsbc, sf_wspec )
+            wspec(:,:,:) = sf_wspec(1)%fnow(:,:,:) * SPREAD(tmask(:,:,1), 3, nn_nwfreq)  ! wave energy spectrum at T point (function of frequency)
+         ENDIF
+
          IF( ln_ice_wav .AND. .NOT. cpl_wpf ) THEN      !== Peak Frequency ==!
             CALL fld_read( kt, nn_fsbc, sf_wpf )
             wpf(:,:) = sf_wpf(1)%fnow(:,:,1) * tmask(:,:,1)  ! wave peak frequency at T point
@@ -365,16 +378,19 @@ CONTAINS
       !!---------------------------------------------------------------------
       INTEGER ::   ierror, ios   ! local integer
       INTEGER ::   ifpr
+      INTEGER ::   ji, jj, jf    ! dummy loop indices
       !!
-      CHARACTER(len=100)     ::  cn_dir                            ! Root directory for location of drag coefficient files
-      TYPE(FLD_N), ALLOCATABLE, DIMENSION(:) ::   slf_i            ! array of namelist informations on the fields to read
-      TYPE(FLD_N)            ::  sn_cdg, sn_usd, sn_vsd,  sn_wpf,  &
-                             &   sn_hsw, sn_wmp, sn_wnum, sn_tauoc    ! informations about the fields to be read
+      CHARACTER(len=100)     ::  cn_dir                             ! Root directory for location of drag coefficient files
+      TYPE(FLD_N), ALLOCATABLE, DIMENSION(:) ::   slf_i             ! array of namelist informations on the fields to read
+      TYPE(FLD_N)            ::  sn_cdg, sn_usd, sn_vsd,  sn_wpf,   &
+                             &   sn_hsw, sn_wmp, sn_wnum, sn_tauoc, &
+                             &   sn_wspec                           ! informations about the fields to be read
       !
-      NAMELIST/namsbc_wave/ cn_dir, sn_cdg, sn_usd, sn_vsd, sn_hsw, sn_wmp, sn_wnum, sn_tauoc,   &
-         &                  ln_cdgw, ln_sdw, ln_tauoc, ln_stcor, ln_charn, ln_taw, ln_phioc,     &
-         &                  ln_wave_test, ln_bern_srfc, ln_breivikFV_2016, ln_vortex_force,      &
-         &                  ln_stshear, ln_wave_spec, sn_wpf
+      NAMELIST/namsbc_wave/ cn_dir, sn_cdg, sn_usd, sn_vsd, sn_wpf, sn_hsw, sn_wmp, sn_wnum,            &
+         &                  sn_tauoc, sn_wspec, ln_cdgw, ln_sdw, ln_tauoc, ln_stcor, ln_charn, ln_taw,  &
+         &                  ln_phioc, ln_wave_test, ln_bern_srfc, ln_breivikFV_2016, ln_vortex_force,   &
+         &                  ln_stshear, ln_wave_spec, ln_wfreq_usr, ln_wfreq_usr_exp, rn_wfreq_usr,     &
+         &                  nn_nwfreq, rn_wfreq_0, rn_wfreq_k
       !!---------------------------------------------------------------------
       IF(lwp) THEN
          WRITE(numout,*)
@@ -401,6 +417,11 @@ CONTAINS
          WRITE(numout,*) '      Surface shear with Stokes drift           ln_stshear = ', ln_stshear
          WRITE(numout,*) '      Test with constant wave fields          ln_wave_test = ', ln_wave_test
          WRITE(numout,*) '      Read wave energy spectrum               ln_wave_spec = ', ln_wave_spec
+         WRITE(numout,*) '         Number of frequency classes             nn_nwfreq = ', nn_nwfreq
+         WRITE(numout,*) '         Frequencies defined by user          ln_wfreq_usr = ', ln_wfreq_usr
+         WRITE(numout,*) '            Exponentially-spaced limits   ln_wfreq_usr_exp = ', ln_wfreq_usr_exp
+         WRITE(numout,*) '         Lowest frequency (ln_wfreq_usr=F)      rn_wfreq_0 = ', rn_wfreq_0
+         WRITE(numout,*) '         Interval scale factor (ln_wfreq_usr=F) rn_wfreq_k = ', rn_wfreq_k
       ENDIF
 
       !                                ! option check
@@ -429,6 +450,60 @@ CONTAINS
          !
       ENDIF
 
+      !            !== Check options for setting frequencies for wave spectrum ==!
+      !
+      IF( rn_wfreq_0 <= 0._wp ) CALL ctl_stop( 'Smallest wave frequency rn_wfreq_0 cannot be negative'  )
+      IF( rn_wfreq_k <= 1._wp ) CALL ctl_stop( 'Wave frequency increment factor rn_wfreq_k must be > 1' )
+
+      !                !==  Set frequency arrays for wave energy spectrum  ==!
+      !
+      ALLOCATE( wfreq_l(nn_nwfreq), wfreq(nn_nwfreq), wfreq_u(nn_nwfreq), wdfreq(nn_nwfreq) )
+      !
+      IF( ln_wfreq_usr ) THEN
+         !
+         ! !== Set bounds from namelist ==!
+         !
+         wfreq_l(:) = rn_wfreq_usr(1:nn_nwfreq  )   ! lower limit of frequency bins
+         wfreq_u(:) = rn_wfreq_usr(2:nn_nwfreq+1)   ! upper limit of frequency bins
+         !
+         IF( ln_wfreq_usr_exp ) THEN
+            ! Put frequencies at fixed-ratio spacing assuming bin limits are exponentially spaced:
+            DO jf = 1, nn_nwfreq
+               wfreq(jf) = SQRT( wfreq_u(jf) / wfreq_l(jf) ) * wfreq_l(jf)
+            ENDDO
+         ELSE
+            ! Put frequencies at mid-points of bin limits:
+            wfreq(:) = .5_wp * (wfreq_l(:) + wfreq_u(:))
+         ENDIF
+         !
+      ELSE
+         ! !== Calculate exponentially-spaced frequency bin intervals such that f(n) = k*f(n-1) ==!
+         !
+         ! In general, frequency fn = f0 * k^n, for n = 0, 1, ..., corresponding to the bin boundaries,
+         ! and n = 1/2, 3/2, ... corresponding to the 'central' values used in calculations. This is all
+         ! determined by f0, k, and nn_wfreq (rn_wfreq_0, rn_wfreq_k, and nn_nwfreq, respectively)
+         !
+         wfreq_l(1) =                    rn_wfreq_0   ! lower limit of lowest frequency bin
+         wfreq  (1) = SQRT(rn_wfreq_k) * rn_wfreq_0   ! 'central' frequency of lowest frequency bin
+         wfreq_u(1) =       rn_wfreq_k * rn_wfreq_0   ! upper limit of lowest frequency bin
+         !
+         DO jf = 2, nn_nwfreq
+            wfreq_l(jf) = rn_wfreq_k * wfreq_l(jf-1)
+            wfreq  (jf) = rn_wfreq_k * wfreq  (jf-1)
+            wfreq_u(jf) = rn_wfreq_k * wfreq_u(jf-1)
+         ENDDO
+         !
+      ENDIF
+
+      wdfreq(:) = wfreq_u(:) - wfreq_l(:)   ! width of frequency bins
+
+      WRITE(numout,*)
+      WRITE(numout,*) '      Frequency (Hz) bins for discretised wave spectrum (n / lower bound / frequency / upper bound):'
+      DO jf = 1, nn_nwfreq
+         WRITE(numout,*) '      ', jf, wfreq_l(jf), wfreq(jf), wfreq_u(jf)
+      ENDDO
+      WRITE(numout,*)
+
       !                             !==  Allocate wave arrays  ==!
       ALLOCATE( ut0sd (jpi,jpj)    , vt0sd (jpi,jpj) )
       ALLOCATE( hsw   (jpi,jpj)    , wmp   (jpi,jpj)    , wpf     (jpi,jpj)     )
@@ -436,6 +511,7 @@ CONTAINS
       ALLOCATE( usd   (jpi,jpj,jpk), vsd   (jpi,jpj,jpk), wsd     (jpi,jpj,jpk) )
       ALLOCATE( tusd  (jpi,jpj)    , tvsd  (jpi,jpj) )
       ALLOCATE( wnum  (A2D(0))     , ZMX   (A2D(0),jpk) )
+      ALLOCATE( wspec(jpi,jpj,nn_nwfreq) )
       usd   (:,:,:) = 0._wp
       vsd   (:,:,:) = 0._wp
       wsd   (:,:,:) = 0._wp
@@ -448,6 +524,7 @@ CONTAINS
       tvsd    (:,:) = 0._wp
       bhd_wave(:,:) = 0._wp
       ZMX   (:,:,:) = 0._wp
+      wspec (:,:,:) = 0._wp
 !
       IF( ln_wave_test ) THEN       !==  Wave TEST case  ==!   set uniform waves fields
          jpfld    = 0                   ! No field read
@@ -458,6 +535,16 @@ CONTAINS
          hsw  (:,:) = 2.80_wp                  ! meters
          wmp  (:,:) = 8.00_wp                  ! seconds
          wpf  (:,:) = 0.08_wp                  ! Hz
+         !
+         ! For wave spectrum test case calculate Bretschneider formula, which depends on wpf and hsw,
+         ! using test case values defined above. See module icewav, function wav_spec_bret, for
+         ! explanation of expression below (cannot use same function here due to circular dependence;
+         ! may make more sense to move that function to sbcwave, i.e., this, module?)
+         !
+         DO_2D(0,0,0,0)
+            wspec(ji,jj,:) = .3125_wp * hsw(ji,jj)**2 * (wpf(ji,jj)**4 / wfreq(:)**5)   &
+               &           * EXP( -1.25_wp * ( wpf(ji,jj) / wfreq(:) )**4 )
+         END_2D
          !
       ELSE                          !==  create the structure associated with fields to be read  ==!
          IF( ln_cdgw ) THEN                       ! wave drag
@@ -516,6 +603,16 @@ CONTAINS
             ENDIF
             ALLOCATE( tauoc_wave(A2D(0)) )
             tauoc_wave(:,:) = 0._wp
+         ENDIF
+
+         IF( ln_ice_wav_spec ) THEN             ! wave energy spectrum (currently, needed for wave-ice interactions only)
+            IF( .NOT. cpl_wspec ) THEN
+               ALLOCATE( sf_wspec(1), STAT=ierror )         !* allocate and fill sf_wspec with sn_wpsec
+               IF( ierror > 0 )   CALL ctl_stop( 'STOP', 'sbc_wave_init: unable to allocate sf_wspec structure' )
+               ALLOCATE( sf_wspec(1)%fnow(jpi,jpj,nn_nwfreq) )
+               IF( sn_wspec%ln_tint ) ALLOCATE( sf_wspec(1)%fdta(jpi,jpj,nn_nwfreq,2) )
+               CALL fld_fill( sf_wspec, (/ sn_wspec /), cn_dir, 'sbc_wave', 'Wave module', 'namsbc_wave' )
+            ENDIF
          ENDIF
 
          IF( ln_ice_wav ) THEN                  ! wave peak frequency (currently, needed for wave-ice interactions only)

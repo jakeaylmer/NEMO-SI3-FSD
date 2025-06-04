@@ -21,8 +21,8 @@ MODULE icewav
    !!----------------------------------------------------------------------
    USE par_ice           ! SI3 parameters
    USE phycst , ONLY :   rpi, grav, rhoi
-   USE sbc_oce, ONLY :   ln_wave, ln_wave_spec   ! SBC: wave module
-   USE sbcwave, ONLY :   hsw, wpf                ! SBC: wave variables
+   USE sbc_oce, ONLY :   ln_wave, ln_wave_spec, nn_nwfreq   ! SBC: wave module
+   USE sbcwave, ONLY :   hsw, wpf, wfreq, wdfreq, wspec     ! SBC: wave variables
    USE ice               ! sea-ice: variables
    USE icefsd , ONLY :   a_ifsd, nf_newice, floe_rl   ! floe size distribution parameters/variables
    USE icefsd , ONLY :   rDt_ice_fsd                  ! floe size distribution functions/routines
@@ -383,14 +383,10 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp),      INTENT(in) ::   phsw_l          ! local significant wave height (m)
-      REAL(wp),      INTENT(in) ::   pwpf_l          ! local peak frequency (Hz)
+      REAL(wp),      INTENT(in)      ::   phsw_l          ! local significant wave height (m)
+      REAL(wp),      INTENT(in)      ::   pwpf_l          ! local peak frequency (Hz)
       !
-      REAL(wp), DIMENSION(25)   ::   wav_spec_bret   ! local wave energy spectrum (m2.Hz-1)
-      !
-      ! NOTE: dimension corresponds to number of frequency classes resolved by wave spectrum.
-      ! ----- This will be a variable declared in sbcwave but is not set up yet, so the 25
-      !       here is a placeholder, as functions cannot have deferred dimensions.
+      REAL(wp), DIMENSION(nn_nwfreq) ::   wav_spec_bret   ! local wave energy spectrum (m2.Hz-1)
       !
       !!-------------------------------------------------------------------
    END FUNCTION wav_spec_bret

@@ -382,6 +382,7 @@
    sn_rcv_bhd    =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_tusd   =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
    sn_rcv_tvsd   =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
+   sn_rcv_wspec  =   'none'                 ,    'no'    ,     ''      ,         ''           ,   ''
 /
 !-----------------------------------------------------------------------
 &namsbc_sas    !   Stand-Alone Surface module: ocean data               (SAS_SRC  only)
@@ -595,7 +596,22 @@
    ln_vortex_force = .false.   !  Vortex Force term 
    ln_stshear  = .false.       !  include stokes shear in EKE computation
 !
-   ln_wave_spec = .false.      !  read wave energy spectrum
+   ln_wave_spec = .false.      !  read wave energy spectrum (coupled or forced mode)
+   nn_nwfreq    = 25           !  number < 100 of spectral (frequency) components (discretised bins).
+   ln_wfreq_usr = .false.      !  spectral bin bounds are defined by rn_wfreq_usr (T), otherwise calculated internally
+   !                           !  (NOTE: frequencies as defined by these options used by icewav module even if ln_wave_spec=F)
+      ! == ln_wfreq_usr=T => manually set frequencies
+      rn_wfreq_usr = 0.01, 0.02   !  wave frequencies (nn_nwfreq + 1 boundaries of frequency bins; Hz)
+      !                           !  (these default values, which are not used since default ln_wfreq_usr=F,
+      !                           !  are just a meaningless placeholder in lieu of putting a long list here)
+      ln_wfreq_usr_exp = .true.   !  user-defined frequency bin bounds are exponentially spaced
+      !                           !  => 'central' frequencies calculated at constant-ratio intervals between bounds (T)
+      !                           !     otherwise, central frequencies are placed at the actual mid-point of bounds (F)
+      !
+      ! == ln_wfreq_usr=F => calculate exponentially-spaced frequencies using:
+      rn_wfreq_0   = 0.03926      !  lowest frequency (lower bound of lowest-frequency bin; Hz; > 0)
+      rn_wfreq_k   = 1.1          !  factor > 1 such that frequency f(n) = rn_wfreq_k * f(n-1)
+      !                           !  Note: highest frequency (upper bound of highest-frequency bin) is rn_wfreq_0 * rn_wfreq_k**nn_nwfreq
 !
    cn_dir      = './'      !  root directory for the waves data location
    !___________!_________________________!___________________!___________!_____________!________!___________!__________________!__________!_______________!
@@ -609,6 +625,7 @@
    sn_wnum     =  'sdw_ecwaves_orca2'    ,        6.         , 'wave_num'   ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
    sn_wpf      =  'sdw_ecwaves_orca2'    ,        6.         , 'wfr'        ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
    sn_tauoc    =  'sdw_ecwaves_orca2'    ,        6.         , 'wave_stress',  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
+   sn_wspec    =  'NOT USED'             ,        6.         , 'wave_spec'  ,  .true.  , .true. , 'yearly'  ,  ''              , ''       , ''
 /
 !-----------------------------------------------------------------------
 &namberg       !   iceberg parameters                                   (default: OFF)
