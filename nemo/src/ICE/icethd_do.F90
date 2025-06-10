@@ -350,8 +350,6 @@ CONTAINS
                jcat_fsd = nf_newice
                IF( ln_ice_wav ) CALL ice_wav_newice( zhsw_1d(ii), zwpf_1d(ii), jcat_fsd )
                !
-               IF(lwp) WRITE(numout,*) 'New ice FSD category =', jcat_fsd
-               !
                CALL ice_fsd_add_newice( a_ifsd_2d(ii,:,jcat)         , za_newice,   &
                   &                     za_b(jcat) + zda_latgro(jcat), jcat_fsd     )
                !
