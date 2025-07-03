@@ -27,6 +27,7 @@ MODULE icefsd
    PUBLIC ::   ice_fsd_init               ! routine called by ice_stp
    PUBLIC ::   ice_fsd_wri                ! routine called by ice_stp
    PUBLIC ::   ice_fsd_restoring          ! routine called by ice_stp
+   PUBLIC ::   fsd_cleanup                ! routine called by ice_wav_frac [TODO: sort out names/distinction of this and ice_fsd_cleanup]
    PUBLIC ::   ice_fsd_cleanup            ! routine called by ice_dyn_adv_pra
    PUBLIC ::   ice_fsd_partition_newice   ! routine called by ice_thd_do
    PUBLIC ::   ice_fsd_add_newice         ! routine called by ice_thd_do
@@ -37,7 +38,7 @@ MODULE icefsd
 
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rl      !: FSD floe radii, lower bounds of categories (m)
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_rc      !: FSD floe radii, centre       of categories (m)
-   REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ru      !: FSD floe radii, upper bounds of categories (m)
+   REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_ru      !: FSD floe radii, upper bounds of categories (m)
    REAL(wp), PUBLIC, ALLOCATABLE, DIMENSION(:)   :: floe_dr      !: FSD category widths (m)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_al      !: FSD floe areas, floes of radii floe_rl (m2)
    REAL(wp),         ALLOCATABLE, DIMENSION(:)   :: floe_ac      !: FSD floe areas, floes of radii floe_rc (m2)
