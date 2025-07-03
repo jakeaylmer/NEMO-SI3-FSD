@@ -497,12 +497,14 @@ CONTAINS
 
       wdfreq(:) = wfreq_u(:) - wfreq_l(:)   ! width of frequency bins
 
-      WRITE(numout,*)
-      WRITE(numout,*) '      Frequency (Hz) bins for discretised wave spectrum (n / lower bound / frequency / upper bound):'
-      DO jf = 1, nn_nwfreq
-         WRITE(numout,*) '      ', jf, wfreq_l(jf), wfreq(jf), wfreq_u(jf)
-      ENDDO
-      WRITE(numout,*)
+      IF(lwp) THEN
+         WRITE(numout,*)
+         WRITE(numout,*) '      Frequency (Hz) bins for discretised wave spectrum (n / lower bound / frequency / upper bound):'
+         DO jf = 1, nn_nwfreq
+            WRITE(numout,*) '      ', jf, wfreq_l(jf), wfreq(jf), wfreq_u(jf)
+         ENDDO
+         WRITE(numout,*)
+      ENDIF
 
       !                             !==  Allocate wave arrays  ==!
       ALLOCATE( ut0sd (jpi,jpj)    , vt0sd (jpi,jpj) )
