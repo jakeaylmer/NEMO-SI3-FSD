@@ -24,8 +24,8 @@ MODULE icewav
    USE sbc_oce, ONLY :   ln_wave, ln_wave_spec, nn_nwfreq   ! SBC: wave module
    USE sbcwave, ONLY :   hsw, wpf, wfreq, wdfreq, wspec     ! SBC: wave variables
    USE ice               ! sea-ice: variables
-   USE icefsd , ONLY :   a_ifsd, nf_newice, floe_rl, floe_rc, floe_ru   ! floe size distribution parameters/variables
-   USE icefsd , ONLY :   rDt_ice_fsd, fsd_cleanup                       ! floe size distribution functions/routines
+   USE icefsd , ONLY :   a_ifsd, nf_newice, floe_rl, floe_rc, floe_ru, floe_dr   ! floe size distribution parameters/variables
+   USE icefsd , ONLY :   rDt_ice_fsd, fsd_cleanup                                ! floe size distribution functions/routines
 
    USE in_out_manager    ! I/O manager (needed for lwm and lwp logicals)
    USE iom               ! I/O manager library (needed for iom_put)
@@ -245,53 +245,42 @@ CONTAINS
       !!                     as these options mean the wave spectrum is being read in from a file
       !!                     or (more likely) from a wave model.
       !!
-      !!                2.   Calculate sea surface height n(x) along 1D sub-grid domain x
-      !!                     (conceptually aligned along direction of wave propagation):
+      !!                2.   Calculate the source terms Q(r) and B(s,r) in the equation for the
+      !!                     tendency of the floe size distribution, f(r), due to wave fracture:
       !!
-      !!                        n(x) = SUM [ C(f) * COS( 2*pi*x/L(f) + phi(f) ) ]
+      !!                        df(r)/dt = -Q(r)*f(r) + int [ B(s,r)*Q(s)*f(s) ds ]
       !!
-      !!                     where C(f) = sqrt[2*E(f)df], L(f) is the wavelength of frequency
-      !!                     component f, and phi(f) is its phase. The dispersion relation for
-      !!                     surface deep water gravity waves, L(f) = g / (2*pi*f^2), where
-      !!                     g is the acceleration due to gravity. The phase phi(f) is either
-      !!                     fixed at pi for all f or chosen to be a random value between 0 and
-      !!                     2*pi depending on ln_ice_wav_rand.
+      !!                     The first term on the left-hand side represents loss of floes of size r
+      !!                     due to them fracturing into smaller floes, and the second term represents
+      !!                     gain of floes of size r due to fracturing of floes of size s.
       !!
-      !!                3.   Calculate distribution of ice fracture lengths in each grid
-      !!                     cell (subroutine wav_frac_dist) from n(x).
+      !!                     Q(r) is the probability that floes of size r are fractured by waves, per
+      !!                     unit time, and B(s,r) is a redistribution function quantifying how floes
+      !!                     of size s are transferred to size r; specifically, B(s,r)dr is the fraction
+      !!                     of the original area of floes in the size interval [s, s+ds] transferred
+      !!                     into the size interval [r,r+dr]. Hence, B(s,r) is normalised for each s
+      !!                     such that: int[ B(s,r)dr ] = 1.
       !!
-      !!                4.   Calculate the tendency of the FSD:
+      !!                     This general formulation from Zhang et al. (2015) allows different wave
+      !!                     fracture schemes to be used via different choices of Q(r) and B(s,r).
+      !!                     Currently, only the scheme of Horvat and Tziperman (2015) is implemented
+      !!                     for which the two source terms are calculated in subroutine wav_frac_ht15.
       !!
-      !!                        df(r,h)/dt = -Om(r,h) + iint [ Om(r',h')*Zt(r,h,r',h') dr'dh' ]
+      !!                     In the discretised implementation, f(r) is replaced by L(r) which
+      !!                     corresponds to model variables a_ifsd(ji,jj,jf,jl) / floe_dr(jf), while
+      !!                     f(s)ds in the integral is replaced directly with a_ifsd(ji,jj,:,jl).
+      !!                     Hence there is an additional factor of floe_dr(jf) that is multiplied
+      !!                     through and combined with the B(s,r) for which the local variable zBfrac
+      !!                     then corresponds to B(s,r)dr (strictly speaking, B integrated over the
+      !!                     floe size category interval, representing the total area fraction of
+      !!                     fractured floes transferred into that category).
       !!
-      !!                     where f(r,h) is the floe size-thickness distribution, Om(r,h) is the
-      !!                     distribution of floes of size r and thickness h that are fractured by waves
-      !!                     per unit ocean area per unit time, and Zt(r,h,r',h') is that for floes
-      !!                     formed by fractures of floes of size r', thickness h' (Roach et al. 2018).
-      !!                     Om and Zt are calculated from the fracture distribution (step 3):
-      !!
-      !!                        Om(r,h) = f(r,h) * int[ r'W(r') dr' ] / (D/2)
-      !!
-      !!                     where the integral is over all floe sizes up to (but excluding) r. Here
-      !!                     there is an implicit dependence on wave group velocity and domain D size
-      !!                     used to compute W(r), which introduces the rate (d/dt) and quantifies the
-      !!                     fraction of ice reached by waves. This term comes from Horvat and Tziperman (2015)
-      !!                     where the model is applied to a single grid box; in this context, the wave
-      !!                     field is a local quantity and assumed to affect all ice in the grid cell,
-      !!                     so this factor is set to 1 (per second). The other term:
-      !!
-      !!                        Zt(r,h,r',h') = rW(r) / int[ r'W(r') dr' ]   (h' == h) AND (r' > r)
-      !!                                      = 0                            otherwise
-      !!
-      !!                     (see Horvat and Tziperman, 2015 and Roach et al. 2018). Note that the quantity
-      !!                     returned by subroutine wav_frac_dist is rW(r) and normalised, so the factor
-      !!                     of D/2 is not needed here (and cancels anyway in the equation for Zt).
-      !!
-      !!                5.   Evolve the FSD with tendency calculated in 4 using adaptive time stepping
-      !!                     (Horvat and Tziperman, 2017).
+      !!                3.   Evolve the FSD using adaptive time stepping (Horvat and Tziperman, 2017).
+      !!                     Additional time-step restrictions apply when evolving f(r), so a smaller step
+      !!                     is (possibly) required, calculated in function rDt_ice_fsd() in module icefsd.
       !!
       !! ** Callers :   ice_stp -> [ice_wav_frac]
-      !! ** Calls   :              [ice_wav_frac] -> wav_frac_dist
+      !! ** Calls   :              [ice_wav_frac] -> wav_frac_ht15
       !! ** Invokes :              [ice_wav_frac] -> wav_spec_bret()   (ln_ice_wav_spec = F AND ln_ice_wav_attn = F)
       !!                           [ice_wav_frac] -> rDt_ice_fsd()
       !!
@@ -303,31 +292,25 @@ CONTAINS
       !!    Horvat, C., & Tziperman, E. (2017).
       !!              The evolution of scaling laws in the sea ice floe size distribution.
       !!              Journal of Geophysical Research: Oceans, 122(9), 7630-7650.
-      !!    Roach, L. A., Horvat, C., Dean, S. M., & Bitz, C. M. (2018).
-      !!              An emergent sea ice floe size disribution in a global coupled ocean-sea ice model
-      !!              Journal of Geophysical Research: Oceans, 123(6), 4322-4337.
+      !!    Zhang, J., Schweiger, A., Steele, M., & Stern, H. (2015).
+      !!              Sea ice floe size distribution in the marginal ice zone: Theory and numerical experiments.
+      !!              Journal of Geophysical Research: Oceans, 120(5), 3484-3498.
       !!
       !!-------------------------------------------------------------------
       !
-      INTEGER , INTENT(in) ::   kt   ! ocean time step
+      INTEGER , INTENT(in)                 ::   kt                   ! ocean time step
       !
-      REAL(wp), DIMENSION(nn_nwfreq)       ::   zCf            ! spectral coefficient (m)
-      REAL(wp), DIMENSION(nn_nwfreq)       ::   zphi           ! spectral phase (rad)
-      REAL(wp), DIMENSION(nn_ice_wav_nx1d) ::   zssh           ! sea surface height profile (m)
-      REAL(wp), DIMENSION(nn_nfsd)         ::   zWfrac         ! wave fracture distribution
-      REAL(wp), DIMENSION(nn_nfsd,nn_nfsd) ::   zZeta          ! term in FSD tendency equation
-      REAL(wp), DIMENSION(nn_nfsd)         ::   zOmega         ! term in FSD tendency equation
-      REAL(wp), DIMENSION(nn_nfsd)         ::   za_ifsd_tend   ! tendency of FSD due to wave fracture
-      REAL(wp)                             ::   zfsd_res       ! correction term for area conservation
+      REAL(wp), DIMENSION(nn_nfsd,nn_nfsd) ::   zBfrac               ! fracture redistribution function B(s,r)dr
+      REAL(wp), DIMENSION(nn_nfsd)         ::   zQfrac               ! fracture probability function (s-1)
+      REAL(wp), DIMENSION(nn_nfsd)         ::   za_ifsd_tend         ! tendency of FSD due to wave fracture
+      REAL(wp)                             ::   zfsd_res             ! correction term for area conservation
+      REAL(wp)                             ::   zdt_sub              ! adaptive time step (s)
+      REAL(wp)                             ::   ztelapsed            ! to track time elapsed during adaptive time stepping (s)
+      INTEGER                              ::   isubt                ! to track number of adaptive time steps
+      INTEGER                              ::   ji, jj, jl, jf       ! dummy loop indices
       !
-      REAL(wp)  ::   zdt_sub     ! adaptive time step (s)
-      REAL(wp)  ::   ztelapsed   ! to track time elapsed during adaptive time stepping (s)
-      INTEGER   ::   isubt       ! to track number of adaptive time steps
-      !
-      INTEGER                             ::   ji, jj, jl, jf   ! dummy loop indices
-      !
-      REAL(wp), PARAMETER :: zat_i_min = .01_wp   ! minimum concentration for fracture to occur
-      INTEGER , PARAMETER :: isubt_max = 100      ! maximum number of adaptive time steps before warning
+      REAL(wp), PARAMETER                  ::   zat_i_min = .01_wp   ! minimum concentration for fracture to occur
+      INTEGER , PARAMETER                  ::   isubt_max = 100      ! maximum number of adaptive time steps before warning
       !
       !!-------------------------------------------------------------------
 
@@ -338,6 +321,8 @@ CONTAINS
       ! surface deep water gravity waves (this array is a constant, so calculate once.
       ! Cannot do this in ice_wav_init as that is called before sbc_wave_init..)
       !
+      ! ToDo: move this to sbc_wave_init?
+      !
       IF( kt == nit000 ) THEN   ! at first time-step
          ALLOCATE( wknum(nn_nwfreq) )
          wknum(:) = 4._wp * rpi**2 * wfreq(:)**2 / grav
@@ -347,48 +332,32 @@ CONTAINS
       ! Begin main loop !
       !-----------------!
       DO_2D( 0, 0, 0, 0 )
-
-         !==================================================!
-         ! (1) Calculate wave spectrum, if needed           !
-         !==================================================!
          !
-         ! Condition depends on combination of various namelist flags; the net condition
-         ! is saved in module variable l_frac_calc_spec calculated in ice_wav_init
+         ! Do not calculate fracture for total ice concentration below threshold:
          !
-         IF( l_frac_calc_spec ) THEN
-            wspec(ji,jj,:) = wav_spec_bret( hsw(ji,jj), wpf(ji,jj) )
-         ENDIF
-
-         ! Do not calculate fracture for: -total ice concentration below threshold
-         !                                -negligible wave spectrum:
-         IF( (at_i(ji,jj) > zat_i_min) .AND. (MAXVAL(wspec(ji,jj,:)) > epsi06) ) THEN
-            !==================================================!
-            ! (2) Calculate sea surface height in 1D subdomain !
-            !==================================================!
+         IF( at_i(ji,jj) > zat_i_min ) THEN
             !
-            ! Spectral coefficients in expansion of local sea surface height:
-            zCf(:) = SQRT( 2._wp * wspec(ji,jj,:) * wdfreq(:) )
-
-            ! Spectral phases [constant for now; possibly add (optional!) random phase later]:
-            zphi(:) = rpi
-
-            ! Calculate sea surface height along 1D subdomain (x1d):
-            zssh(:) = 0._wp
-            DO jf = 1, nn_nwfreq
-               zssh(:) = zssh(:) + zCf(jf) * COS( zphi(jf) + wknum(jf) * x1d(:) )
-            ENDDO
-
-            !==================================================!
-            ! (3) Calculate 'fracture histogram'               !
-            !==================================================!
+            ! (1) Calculate wave spectrum, if needed. Condition depends on combination of various
+            ! namelist flags; the net condition is saved in module variable l_frac_calc_spec
             !
-            CALL wav_frac_dist( zssh(:), vt_i(ji,jj) / at_i(ji,jj), zWfrac(:) )
+            IF( l_frac_calc_spec ) wspec(ji,jj,:) = wav_spec_bret( hsw(ji,jj), wpf(ji,jj) )
 
-            ! Proceed only if some fractures can occur, implied by non-zero zWfrac.
-            ! Fracturing quantified by zWfrac is applied to each ice thickness category
+            ! (2) Calculate source terms for the wave fracture equation
+            !     For now, there is only one scheme (Horvat and Tziperman, 2015)
+            !     But do not do the calculation if the local wave spectrum is too weak:
+            !
+            IF( MAXVAL( wspec(ji,jj,:) ) > epsi06 ) THEN
+               CALL wav_frac_ht15( wspec(ji,jj,:), vt_i(ji,jj) / at_i(ji,jj), zQfrac(:), zBfrac(:,:) )
+            ELSE
+               zQfrac(:)   = 0._wp
+               zBfrac(:,:) = 0._wp
+            ENDIF
+
+            ! Proceed only if some fractures can occur, implied by non-zero zQfrac.
+            ! Fracturing quantified by zQfrac is applied to each ice thickness category
             ! if possible (enough ice to begin with), in proportion to its concentration
             !
-            IF( MAXVAL(zWfrac(:)) > epsi10 ) THEN
+            IF( MAXVAL(zQfrac(:)) > epsi10 ) THEN
                !--------------------------------------!
                ! Begin sub-loop: thickness categories !
                !--------------------------------------!
@@ -405,26 +374,7 @@ CONTAINS
                      &   .AND. (a_ifsd(ji,jj,1,jl) < 1._wp)                 &
                      &   .AND. (SUM(a_ifsd(ji,jj,:,jl)) >  epsi10) ) THEN
                      !
-                     !==================================================!
-                     ! (4) Calculate FSD tendency terms                 !
-                     !==================================================!
-                     !
-                     ! zZeta(:,:) is independent of FSD, so calculate before adaptive time stepping
-                     ! zOmega(:) depends on FSD and so must be (re-)calculated during adaptive time stepping
-                     !
-                     zZeta(:,:) = 0._wp
-                     !
-                     DO jf = 2, nn_nfsd
-                        zZeta(jf,1:jf-1) = zWfrac(1:jf-1)
-                     ENDDO
-                     !
-                     DO jf = 1, nn_nfsd
-                        IF( SUM(zZeta(jf,:)) > 0._wp ) zZeta(jf,:) = zZeta(jf,:) / SUM(zZeta(jf,:))
-                     ENDDO
-                     !
-                     !==================================================!
-                     ! (5) Evolve the FSD with adaptive time stepping   !
-                     !==================================================!
+                     ! (3) Evolve the FSD with adaptive time stepping
                      !
                      ! Initialise:
                      ztelapsed = 0._wp
@@ -435,15 +385,10 @@ CONTAINS
                         ! Exit loop if all ice already in smallest floe size category:
                         IF( a_ifsd(ji,jj,1,jl) >= 1._wp - epsi10 ) EXIT
                         !
-                        ! Calculate Omega term in wave fracture equation:
+                        ! Calculate FSD tendency due to wave fracture:
                         DO jf = 1, nn_nfsd
-                           zOmega(jf) = a_ifsd(ji,jj,jf,jl) * SUM(zWfrac(1:jf-1))
-                        ENDDO
-                        !
-                        ! Calculate FSD tendency due to wave fracture
-                        ! (cannot combine with loop above as we need SUM over Omega):
-                        DO jf = 1, nn_nfsd
-                           za_ifsd_tend(jf) = SUM( zOmega(:) * zZeta(:,jf) ) - zOmega(jf)
+                           za_ifsd_tend(jf) = SUM( zBfrac(:,jf) * zQfrac(:) * a_ifsd(ji,jj,:,jl) )   &
+                              &               - zQfrac(jf) * a_ifsd(ji,jj,jf,jl)
                         ENDDO
                         !
                         WHERE( ABS(za_ifsd_tend) < epsi10 ) za_ifsd_tend = 0._wp
@@ -495,8 +440,8 @@ CONTAINS
                      !
                   ENDIF ! category jl can fracture
                ENDDO ! -- sub-loop (ice thickness categories)
-            ENDIF ! ----- MAXVAL(zWfrac) > 0
-         ENDIF ! -------- at_i(ji,jj) > zat_i_min and spectrum > 0
+            ENDIF ! ----- MAXVAL(zQfrac) > 0
+         ENDIF ! -------- at_i(ji,jj) > zat_i_min
       END_2D ! ---------- main loop
 
       CALL lbc_lnk( 'icewav', a_ifsd, 'T', 1._wp )
@@ -507,52 +452,70 @@ CONTAINS
    END SUBROUTINE ice_wav_frac
 
 
-   SUBROUTINE wav_frac_dist( pssh, ph_i, pWfrac )
+   SUBROUTINE wav_frac_ht15( pWspec, ph_i, pQfrac, pBfrac )
       !!-------------------------------------------------------------------
       !!                 *** ROUTINE wav_frac_dist ***
       !!
-      !! ** Purpose :   Calculate distribution of fractured ice lengths from a given local
-      !!                sea surface height (SSH) field, n(x), and mean ice thickness, h_i
+      !! ** Purpose :   Calculate the probability and redistribution functions for the
+      !!                equation evolving the FSD due to wave fracture for the scheme
+      !!                of Horvat and Tziperman (2015) and Roach et al. (2018)
       !!
-      !! ** Method  :   Sea ice is subject to strain due to flexure by the varying SSH
+      !! ** Method  :   This scheme calculates a distribution of fractured ice lengths from
+      !!                the local sea surface height (SSH) field, n(x), defined along a 1D
+      !!                sub-gridscale domain and computed from the local wave spectrum.
+      !!
+      !!                Sea ice is subject to strain due to flexure by the varying SSH
       !!                associated with the local wave field. In this subroutine, ice of
       !!                thickness h_i is assumed/conceptualised to cover the whole 1D sub-
-      !!                domain for which the input sea surface height is defined. Externally,
-      !!                in subroutine ice_wav_frac, the result is applied in proportion to
-      !!                the actual sea ice concentration in each thickness category.
+      !!                domain for which the input sea surface height is defined. Ice fractures
+      !!                at locations where the strain, e, exceeds a critical threshold, e_crit:
       !!
-      !!                Ice fractures at locations where the strain, e, exceeds a critical
-      !!                threshold, e_crit:
+      !!                   e = 0.5 * h_i * |d^2 n/dx^2| >= e_crit
       !!
-      !!                    e = 0.5 * h_i * |d^2 n/dx^2| >= e_crit
+      !!                For each extremum in SSH, the nearest neighbouring extrema either side are
+      !!                located. The strain is then calculated across such triplets of extrema in
+      !!                SSH that are either {min., max., min.} or {max., min., max.} using a finite
+      !!                differencing approximation across the triplet. Ice breaks at the central
+      !!                extremum if e >= e_crit. The distances between all such breaking points along
+      !!                the 1D domain (x) determines the lengths of fractured ice. The number
+      !!                distribution of these lengths (as radii) is then binned into the FSD category
+      !!                bins, and the result is called the 'fracture distribution', W(r), such that
+      !!                W(r)dr is the number of fracture radii in the interval [r, r+dr]. From this,
+      !!                the probability function in the wave fracture equation is:
       !!
-      !!                For each extremum in SSH, the nearest neighbouring extrema either side
-      !!                are located. The strain is then calculated across such triplets of
-      !!                extrema in SSH that are either {min., max., min.} or {max., min., max.}
-      !!                using a finite differencing approximation across the triplet. Ice breaks
-      !!                at the central extremum if e >= e_crit. The distances between all such
-      !!                breaking points along the 1D domain (x) determines the lengths of
-      !!                fractured ice. The number distribution of these lengths is then binned
-      !!                into the FSD category bins, and the result is called the 'fracture
-      !!                distribution', W(r).
+      !!                   Q(r) = 1/(D/2) * int[ r'W(r') dr' ]
       !!
-      !!                W(r) satisfies int[ rW(r) dr ] = D/2, where the integral is over all
-      !!                floe sizes, since the sum of all fracture lengths (twice their radii)
-      !!                must equal the domain size. The quantity returned by this subroutine is
-      !!                rW(r)/(D/2), i.e., W(r) normalised and scaled by the floe size of each
-      !!                category, since W(r) always appears multiplied by r in the terms of the
-      !!                FSD tendency equation implemented in subroutine ice_wav_frac.
+      !!                where the integral limits are from the smallest floe size up to r, and the
+      !!                redistribution function:
       !!
-      !!                Theory and method summarised above is based on
-      !!                Horvat and Tziperman (2015) and Roach et al. (2018).
+      !!                   B(s,r) = rW(r) / int[ r'W(r') dr' ]   for r < s
+      !!                          = 0                            otherwise
       !!
-      !! ** Inputs  :   pssh(nn_ice_wav_nx1d) :   sub-gridscale SSH associated with local wave field (m)
-      !!                ph_i                  :   local (grid cell) mean sea ice thickness (m)
+      !!                where the integral limits are from the smallest floe size up to s.
+      !!                Note that int[ B(s,r)dr ] = 1 as required (see subroutine ice_wav_frac).
       !!
-      !! ** Outputs :   pWfrac(nn_nfsd)       :   fracture distribution (m-1; normalised; binned into
-      !!                                          FSD categories; scaled by floe size in each category)
+      !!                W(r) satisfies int[ r'W(r') dr' ] = D/2, where the integral is over all floe
+      !!                sizes, since the sum of all fracture lengths (twice their radii) must equal
+      !!                the domain size, D. So, Q(r) is the fraction of all fracture lengths smaller
+      !!                than r. This normalisation factor cancels in the expression for B so there
+      !!                are no explicit factors of D.
       !!
-      !! ** Callers :   ice_wav_frac --> [wav_frac_dist]
+      !!                Note also there is an implicit factor of (cg/D) in the expression for Q(r),
+      !!                where cg is the wave group velocity, representing the fraction of the domain
+      !!                reached by waves. This term comes from Horvat and Tziperman (2015) where the
+      !!                model is applied to a single grid box; in this context, the wave field is a
+      !!                local quantity for the grid cell assumed to affect all the ice in the grid
+      !!                cell, so this factor is set to 1 (per second).
+      !!
+      !! ** Inputs  :   pWspec(nn_nwfreq)       :   local wave spectrum (spectral energy density; m2.Hz-1)
+      !!                ph_i                    :   local (grid cell) mean sea ice thickness (m)
+      !!
+      !! ** Outputs :   pQfrac(nn_nfsd)         :   fracture probability function (s-1)
+      !!                pBfrac(nn_nfsd,nn_nfsd) :   fracture redistribution function, B(s,r)dr
+      !!                                            (note: first  index corresponds to original floe size s,
+      !!                                                   second index corresponds to fractured floe size r)
+      !!
+      !! ** Callers :   ice_wav_frac --> [wav_frac_ht15]
       !!
       !! ** References
       !!    ----------
@@ -560,44 +523,59 @@ CONTAINS
       !!              A prognostic model of the sea-ice floe size and thickness distribution.
       !!              The Cryosphere, 9, 2119-2134.
       !!    Roach, L. A., Horvat, C., Dean, S. M., & Bitz, C. M. (2018).
-      !!              An emergent sea ice floe size disribution in a global coupled ocean-sea ice model
+      !!              An emergent sea ice floe size disribution in a global coupled ocean-sea ice model.
       !!              Journal of Geophysical Research: Oceans, 123(6), 4322-4337.
       !!
       !!-------------------------------------------------------------------
       !
-      REAL(wp), DIMENSION(nn_ice_wav_nx1d), INTENT(in)    ::   pssh     ! sea surface height (m)
+      REAL(wp), DIMENSION(nn_nwfreq)      , INTENT(in)    ::   pWspec   ! local wave spectral energy density (m2.Hz-1)
       REAL(wp)                            , INTENT(in)    ::   ph_i     ! grid cell mean ice thickness (m)
-      REAL(wp), DIMENSION(nn_nfsd)        , INTENT(inout) ::   pWfrac   ! wave fracture distribution (m-1)
+      REAL(wp), DIMENSION(nn_nfsd)        , INTENT(inout) ::   pQfrac   ! wave fracture probability function (s-1)
+      REAL(wp), DIMENSION(nn_nfsd,nn_nfsd), INTENT(inout) ::   pBfrac   ! wave fracture redistribution function, B(s,r)dr
       !
       INTEGER                              ::   jx, jy, jf              ! dummy loop indices
       INTEGER                              ::   ixlo, ixhi              ! indices of x1d to locate extrema
       INTEGER                              ::   ixfrac                  ! number of fracture points along x1d
       LOGICAL , DIMENSION(nn_ice_wav_nx1d) ::   llmin, llmax, llext     ! sea surface height is a min / is a max / is an extrema
+      REAL(wp), DIMENSION(nn_nwfreq)       ::   zphi                    ! phase of wave spectrum components (rad)
+      REAL(wp), DIMENSION(nn_ice_wav_nx1d) ::   zssh                    ! sea surface height along x1d (m)
       REAL(wp)                             ::   zdx, zdxlo, zdxhi       ! distances between x1d points in finite difference computation (m)
       REAL(wp)                             ::   zstrain                 ! strain experienced by sea ice due to wave field
       REAL(wp), DIMENSION(nn_ice_wav_nx1d) ::   zxfrac                  ! distances to points along x1d at which ice fractures
       REAL(wp), DIMENSION(nn_ice_wav_nx1d) ::   zdxfrac                 ! distances between fracture points along x1d (m)
       REAL(wp)                             ::   zfrac_rad               ! floe radius of a piece of fractured ice (m)
+      REAL(wp), DIMENSION(nn_nfsd)         ::   zWfrac                  ! fracture distribution (multiplied by dr; dimensionless)
       !
       !!-------------------------------------------------------------------
 
       ! Control:
-      IF( ln_timing )   CALL timing_start('wav_frac_dist')
+      IF( ln_timing )   CALL timing_start('wav_frac_ht15')
 
       ! Initialisation:
-      llmin(:)   = .FALSE.
-      llmax(:)   = .FALSE.
-      ixfrac     = 1
-      zxfrac (:) = 0._wp
-      zdxfrac(:) = 0._wp
-      pWfrac (:) = 0._wp
+      llmin(:)    = .FALSE.
+      llmax(:)    = .FALSE.
+      ixfrac      = 1
+      zxfrac (:)  = 0._wp
+      zdxfrac(:)  = 0._wp
+      zWfrac (:)  = 0._wp
+      pQfrac(:)   = 0._wp
+      pBfrac(:,:) = 0._wp
+
+      ! Spectral phases [constant for now; possibly add (optional!) random phase later]:
+      zphi(:) = rpi
+
+      ! Calculate sea surface height along 1D subdomain (x1d):
+      zssh(:) = 0._wp
+      DO jf = 1, nn_nwfreq
+         zssh(:) = zssh(:) + SQRT( 2._wp * pWspec(jf) * wdfreq(jf) ) * COS( zphi(jf) + wknum(jf) * x1d(:) )
+      ENDDO
 
       ! Find local extrema in sea surface height, defined to be minima or maxima over
       ! a 'moving window' of (2*nn_ice_wav_rmin + 1) points in the 1D subdomain x1d:
       !
       DO jx = 1 + nn_ice_wav_rmin, nn_ice_wav_nx1d - nn_ice_wav_rmin
-         llmax(jx) = ( MAXLOC( pssh(jx-nn_ice_wav_rmin:jx+nn_ice_wav_rmin), DIM=1 ) == nn_ice_wav_rmin )
-         llmin(jx) = ( MINLOC( pssh(jx-nn_ice_wav_rmin:jx+nn_ice_wav_rmin), DIM=1 ) == nn_ice_wav_rmin )
+         llmax(jx) = ( MAXLOC( zssh(jx-nn_ice_wav_rmin:jx+nn_ice_wav_rmin), DIM=1 ) == nn_ice_wav_rmin )
+         llmin(jx) = ( MINLOC( zssh(jx-nn_ice_wav_rmin:jx+nn_ice_wav_rmin), DIM=1 ) == nn_ice_wav_rmin )
          llext(jx) = (llmin(jx) .OR. llmax(jx))
       ENDDO
 
@@ -660,7 +638,7 @@ CONTAINS
                   !
                   ! Note: zdx* are all strictly > 0, since ixlo <= jx - 1 and ixhi >= jx + 1
                   !
-                  zstrain = ABS( .5_wp * ph_i * ( pssh(ixhi) * zdxlo - pssh(jx) * zdx + pssh(ixlo) * zdxhi)   &
+                  zstrain = ABS( .5_wp * ph_i * ( zssh(ixhi) * zdxlo - zssh(jx) * zdx + zssh(ixlo) * zdxhi)   &
                      &                          / ( zdxlo * zdx * zdxhi ) )
                   !
                   ! Only need to know whether this strain exceeds the critical strain
@@ -695,12 +673,14 @@ CONTAINS
             !
             zfrac_rad = .5_wp * (zxfrac(jx) - zxfrac(jx-1))   ! factor of 0.5 ==> radius of fractured ice
             !
-            ! Populate appropriate floe size category in fracture histogram, pWfrac(:)
+            ! Populate appropriate floe size category in fracture histogram, zWfrac(:)
             ! Just add 1 for now to get relative proportions in each category; scale whole thing afterwards
+            ! Note that zWfrac(:) corresponds to W(r)dr in equation, i.e., there is an implicit factor
+            ! of floe_dr(:) which is hence also present in zBfrac(:,:) calculated later.
             !
             DO jf = 1, nn_nfsd - 1
                IF( zfrac_rad < floe_ru(jf) ) THEN
-                  pWfrac(jf) = pWfrac(jf) + 1._wp
+                  zWfrac(jf) = zWfrac(jf) + 1._wp
                   EXIT
                ENDIF
             ENDDO
@@ -708,23 +688,42 @@ CONTAINS
             ! Separate check for largest fractures (even if it exceeds upper bound of largest
             ! floe size category, it goes into that category anyway; note similar for very small
             ! fractures accounted for in above loop anyway):
-            IF( zfrac_rad >= floe_rl(nn_nfsd) ) pWfrac(nn_nfsd) = pWfrac(nn_nfsd) + 1._wp
+            IF( zfrac_rad >= floe_rl(nn_nfsd) ) zWfrac(nn_nfsd) = zWfrac(nn_nfsd) + 1._wp
             !
          ENDDO
 
-         ! Scale fracture histogram with floe size of each category and normalise:
+         ! Scale fracture histogram with floe size of each category and normalise
+         ! (noting W only appears multiplied by r in equations for Q and B):
          DO jf = 1, nn_nfsd
-            pWfrac(jf) = floe_rc(jf) * pWfrac(jf)
+            zWfrac(jf) = floe_rc(jf) * zWfrac(jf)
          ENDDO
          !
-         IF( SUM(pWfrac(:)) > 0._wp ) pWfrac(:) = pWfrac(:) / SUM(pWfrac(:))
+         IF( SUM(zWfrac(:)) > 0._wp ) zWfrac(:) = zWfrac(:) / SUM(zWfrac(:))
          !
       ENDIF
 
-      ! Control:
-      IF( ln_timing )   CALL timing_stop('wav_frac_dist')
+      ! Calculate the probability (pQfrac) and redistribution (pBfrac) functions
+      ! from the fracture distribution [zWfrac, which corresponds to rW(r)dr]:
+      !
+      DO jf = 2, nn_nfsd
+         pBfrac(jf,1:jf-1) = zWfrac(1:jf-1)   ! B(s,r)dr = rW(r)dr for r < s, normalised below
+      ENDDO
+      !
+      DO jf = 1, nn_nfsd
+         !
+         pQfrac(jf) = SUM(zWfrac(1:jf-1))     ! Q(r) = int[ r'W(r')dr' ] for r' < r
+         !
+         ! Divide B(s,r)dr calculated above by the integral/sum over r
+         ! This normalises it so that int[ B(s,r)dr ] = 1:
+         !
+         IF( SUM(pBfrac(jf,:)) > 0._wp ) pBfrac(jf,:) = pBfrac(jf,:) / SUM(pBfrac(jf,:))
+         !
+      ENDDO
 
-   END SUBROUTINE wav_frac_dist
+      ! Control:
+      IF( ln_timing )   CALL timing_stop('wav_frac_ht15')
+
+   END SUBROUTINE wav_frac_ht15
 
 
    FUNCTION wav_spec_bret( phsw_l, pwpf_l )
