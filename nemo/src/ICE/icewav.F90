@@ -19,31 +19,43 @@ MODULE icewav
    !!   wav_spec_bret() : Bretschneider wave spectrum formula
    !!   ice_wav_init    : initialisation of wave-ice interaction module
    !!----------------------------------------------------------------------
+
+   USE par_oce           ! ocean parameters
+   USE dom_oce           ! ocean space and time domain
+
    USE par_ice           ! SI3 parameters
    USE phycst , ONLY :   rpi, grav, rhoi
-   USE sbc_oce, ONLY :   ln_wave, ln_wave_spec, nn_nwfreq   ! SBC: wave module
-   USE sbcwave, ONLY :   hsw, wpf, wfreq, wdfreq, wspec     ! SBC: wave variables
+   USE sbc_oce, ONLY :   ln_wave, ln_wave_spec, nn_nwfreq        ! SBC: wave module
+   USE sbcwave, ONLY :   hsw, wpf, wmp, wfreq, wdfreq, wspec     ! SBC: wave variables
    USE ice               ! sea-ice: variables
    USE icefsd , ONLY :   a_ifsd, nf_newice, floe_rl, floe_rc, floe_ru, floe_dr   ! floe size distribution parameters/variables
    USE icefsd , ONLY :   rDt_ice_fsd, fsd_cleanup                                ! floe size distribution functions/routines
 
    USE in_out_manager    ! I/O manager (needed for lwm and lwp logicals)
    USE iom               ! I/O manager library (needed for iom_put)
-   USE lib_mpp           ! MPP library (needed for read_nml_substitute.h90)
+   USE lib_mpp           ! MPP library (needed for read_nml_substitute.h90 and mppsync)
    USE lbclnk            ! lateral boundary conditions (or mpp links)
    USE timing            ! Timing
 
    IMPLICIT NONE
 
    PUBLIC ::   ice_wav_newice   ! routine called by ice_thd_do
-   PUBLIC ::   ice_wav_attn     ! routine called by sbc_wave
+   PUBLIC ::   ice_wav_attn     ! routine called by ice_stp
    PUBLIC ::   ice_wav_frac     ! routine called by ice_stp
    PUBLIC ::   ice_wav_init     ! routine called by ice_init
 
-   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:) ::   x1d     ! 1D subdomain for wave fracture
-   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:) ::   wknum   ! angular wave numbers corresponding to wfreq array (m-1)
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:)   ::   x1d      ! 1D subdomain for wave fracture in HT15 scheme
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:)   ::   wknum    ! angular wave numbers corresponding to wfreq array (m-1)
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:) ::   stmer    ! meridional distance across T cells (m)
 
+   LOGICAL ::   l_attn_calc_spec   ! whether spectrum needs to be calculated in subroutine ice_wav_attn
    LOGICAL ::   l_frac_calc_spec   ! whether spectrum needs to be calculated in subroutine ice_wav_frac
+
+   ! Global-domain arrays needed for attenuation (ice_wav_attn) -- which also must be 'global' in module scope:
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:)   ::   glamt_glo   ! T-grid longitude (degrees east)
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:)   ::   gphit_glo   ! T-grid latitude (degrees north)
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:) ::   wspec_glo   ! wave energy spectrum (Hz)
+   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:) ::   watxp_glo   ! attenuation factor exponents
 
    !                                     !!* namelist (namwav) *
    LOGICAL         ::   ln_ice_wav_rand   !: Use random phases for sea surface height in wave fracture calculation
@@ -51,6 +63,7 @@ MODULE icewav
    REAL(wp)        ::   rn_ice_wav_dx1d   !: Increment of 1D subdomain for wave fracture calculation (meters)
    INTEGER         ::   nn_ice_wav_rmin   !: Radius of smallest floes affected by wave fracture in units of rn_ice_wav_dx1d
    REAL(wp)        ::   rn_ice_wav_ecri   !: Critical strain at which ice fractures due to waves (dimensionless)
+   REAL(wp)        ::   rn_attn_lam_tol   !: Attenuation scheme longitude tolerance for identifying meridians (degrees E)
    !
    ! Note: other namwav parameters declared in par_ice as they are needed by module
    ! ----- sbcwave which cannot access this module (would create circular dependency)
@@ -151,33 +164,75 @@ CONTAINS
    END SUBROUTINE ice_wav_newice
 
 
-   SUBROUTINE ice_wav_attn
+   SUBROUTINE ice_wav_attn( kt )
       !!-------------------------------------------------------------------
       !!                 *** ROUTINE ice_wav_attn ***
       !!-------------------------------------------------------------------
       !!
-      !! ** Purpose :   Calculate attenuated wave spectrum and derived wave
-      !!                properties in sea ice grid cells
+      !! ** Purpose :   Calculate attenuated wave spectrum and derived wave properties in sea ice
+      !!                grid cells using wave data from non-sea ice covered grid cells.
       !!
-      !! ** Method  :   For each ice-covered grid cell, locate the nearest equatorward
-      !!                open-ocean grid cell along meridians. Assume waves propogate
-      !!                from such open-ocean grid cells to the sea ice cell along such
-      !!                meridians, with the wave energy being attenuated according to
-      !!                the number of ice floes and mean ice thickness along the way.
+      !! ** Method  :   For each ice-covered grid cell -- the "target" grid cell -- locate
+      !!                the nearest equatorward open-ocean grid cell along meridians that also
+      !!                contains wave data -- the "source" grid cell. Waves are assumed to
+      !!                propagate from the source to target grid cell being attenuated along the
+      !!                way according to the ice properties in each grid cell encountered. This
+      !!                'waves-in-ice' attenuation scheme follows the method of Roach et al. (2018).
       !!
-      !!                This waves-in-ice attenuation scheme follows the method of
-      !!                Roach et al. (2018) with related theory and expression for the
-      !!                wave attenuation coefficients from Horvat and Tziperman (2015).
+      !!                Attenuation is a function of wave frequency, f, mean ice thickness, h,
+      !!                and the number of floes, N. Specifically, when waves with energy spectrum
+      !!                E0(f) travel to a neighbouring grid cell, the energy spectrum E1(f) at the
+      !!                neighbouring grid cell is then given by:
       !!
-      !! ** Callers :   sbc_wave --> [ice_wav_attn]
-      !! ** Calls   :                [ice_wav_attn] --> ice_wav_calc
-      !! ** Invokes :                [ice_wav_attn] --> wav_spec_bret()
+      !!                   E1(f) = E0(f) * exp[ -N1 * a(h1,f) ]
       !!
-      !! ** Notes   :   This routine is only called when ln_ice_wav_attn=T. It either
-      !!                uses the wave spectrum in the nearest open ocean if available
-      !!                (ln_wave_spec=T, ln_ice_wav_spec=T), otherwise it estimates
-      !!                the spectrum using the Bretschneider formula with the
-      !!                significant wave height and peak frequency wave field inputs.
+      !!                where a(h,f) is an attenuation coefficient set to a quadratic fit to a
+      !!                (more complex) theoretical formula, given by Horvat and Tziperman (2015):
+      !!
+      !!                   a(h,f) = c0 + ch*h + cT*T + ch2*h^2 + cT2*T^2 + chT*h*T
+      !!
+      !!                with T = 1/f is the wave component period and the various c are constants.
+      !!                As waves travel encountering multiple grid cells k with different ice
+      !!                properties from the source to the target grid cell, the resulting spectrum
+      !!                is calculated as:
+      !!
+      !!                   E_target(f) = E_source(f) * exp[ -SUM_k{ Nk * a(hk,f) } ]
+      !!
+      !!                This routine proceeds as follows:
+      !!
+      !!                1.   Calculate the attenuation exponents, Nk * a(hk,f), for all ice covered grid
+      !!                     cells, and (if necessary, according to module flag l_attn_calc_spec) the
+      !!                     wave spectrum from significant wave height/peak frequency inputs in all
+      !!                     grid cells.
+      !!
+      !!                2.   Copy these terms into global-domain, global (i.e., module scope) arrays. This
+      !!                     is necessary because for any given target grid cell the source grid cell may
+      !!                     be in a different computational subdomain, so all values must be available to
+      !!                     all subdomains before step 3. A call to lib_mpp routine mppsync (a wrapper for
+      !!                     MPP_BARRIER) ensures this is possible. Similar global arrays are required for
+      !!                     the grid cell longitude and latitudes, but these are compute in advance, in
+      !!                     subroutine ice_wav_init.
+      !!
+      !!                3.   For each target grid cell (in the computational subdomain), search for the
+      !!                     source grid cell according to the criteria above, which is applied using
+      !!                     masks on the global coordinate arrays computed/described in step 2.
+      !!
+      !!                     If a source is found, calculate the attenuated wave spectrum at the target
+      !!                     grid cell according to the above equation.
+      !!
+      !!                4.   Calculate wave properties at the target cell (significant wave height, etc.)
+      !!                     for the actual arrays defining such quantities declared in sbc_wave.F90.
+      !!
+      !! ** Callers :   ice_stp --> [ice_wav_attn]
+      !! ** Calls   :               [ice_wav_attn] --> mppsync
+      !!                                           --> lbc_lnk
+      !!                                           --> ice_wav_calc
+      !! ** Invokes :               [ice_wav_attn] --> wav_spec_bret()
+      !!
+      !! ** Notes   :   This routine is only called when ln_ice_wav_attn=T. It either uses the wave spectrum
+      !!                in the nearest open ocean if available (ln_wave_spec=T, ln_ice_wav_spec=T), otherwise
+      !!                it estimates the spectrum using the Bretschneider formula on the significant wave height
+      !!                and peak frequency wave field inputs at the same location.
       !!
       !! ** References
       !!    ----------
@@ -190,18 +245,211 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
+      INTEGER , INTENT(in)               ::   kt            ! ocean time step
+      !
+      REAL(wp), DIMENSION(nn_nwfreq)     ::   zattxp        ! local damping exponent (number of floes x attenuation coefficient)
+      REAL(wp)                           ::   zdmean        ! grid cell mean floe diameter (m)
+      REAL(wp)                           ::   znfloes       ! number of floes
+      REAL(wp)                           ::   zhi           ! mean ice thickness (m)
+      REAL(wp)                           ::   zloga         ! natural logarithm of attenuation coefficient
+      REAL(wp)                           ::   zattxp_tot    ! total damping exponent
+      !
+      LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_ice   ! GLOBAL DOMAIN ARRAY: ice-present  mask
+      LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_mer   ! GLOBAL DOMAIN ARRAY: meridional   mask
+      LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_eqt   ! GLOBAL DOMAIN ARRAY: equatorward  mask
+      LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_pol   ! GLOBAL DOMAIN ARRAY: poleward     mask
+      LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_tot   ! GLOBAL DOMAIN ARRAY: total        mask
+      !
+      INTEGER                            ::   ierr                                 ! allocate status return value
+      INTEGER                            ::   ji, jj, jf, jl, jw, ji_glo, jj_glo   ! dummy loop indices
+      INTEGER , DIMENSION(2)             ::   isource                              ! indices of source grid cells (in global domain)
+      !
+      REAL(wp), PARAMETER ::   zc0      = -0.3203_wp   ! attenuation coefficient from HT15 (constant term      )
+      REAL(wp), PARAMETER ::   zch      =  2.0580_wp   ! attenuation coefficient from HT15 (coefficient of hi  )
+      REAL(wp), PARAMETER ::   zct      = -0.9375_wp   ! attenuation coefficient from HT15 (coefficient of T   )
+      REAL(wp), PARAMETER ::   zch2     = -0.4269_wp   ! attenuation coefficient from HT15 (coefficient of hi^2)
+      REAL(wp), PARAMETER ::   zct2     =  0.0006_wp   ! attenuation coefficient from HT15 (coefficient of T^2 )
+      REAL(wp), PARAMETER ::   zcht     =  0.1566_wp   ! attenuation coefficient from HT15 (coefficient of hi*T)
+      !
+      REAL(wp), PARAMETER ::   zf_noice = -1._wp       ! dummy flag value < 0        for ice-free ocean grid cell
+      REAL(wp), PARAMETER ::   zf_land  = -2._wp       ! dummy flag value < zf_noice for land grid cell
+      !
       !!-------------------------------------------------------------------
+
+      ! Control:
+      IF( ln_timing )   CALL timing_start('ice_wav_attn')
+
+      IF( kt == nit000 ) THEN   ! at first time-step
+         ! This cannot be done in ice_wav_init due to order of initialisation routines
+         ! (ice_wav_init comes before sbc_wave_init, so nn_nwfreq is not known yet)
+         ALLOCATE( wspec_glo(jpiglo,jpjglo,nn_nwfreq),           &
+            &      watxp_glo(jpiglo,jpjglo,nn_nwfreq), STAT=ierr )
+         !
+         IF( ierr /= 0 ) CALL ctl_stop( 'ice_wav_attn: unable to allocate global wave arrays' )
+         !
+      ENDIF
+
+      ! =================================================== !
+      ! 1  Calculate attenuation exponents -- all ice cells !
+      ! =================================================== !
+      DO_2D(0, 0, 0, 0)
+         !
+         ! Use a less-strict threshold than wave fracture routine here as
+         ! wave-dependent growth needs the derived wave fields (hsw, wpf)
+         !
+         IF( at_i(ji,jj) > epsi06 ) THEN
+
+            ! Mean floe diameter:
+            zdmean = 0._wp
+            DO jf = 1, nn_nfsd
+               DO jl = 1, jpl
+                  zdmean = zdmean + 2._wp * floe_rc(jf) * a_i(ji,jj,jl) * a_ifsd(ji,jj,jf,jl)
+               ENDDO
+            ENDDO
+
+            ! Number of floes per unit distance encountered ~ sea ice conc. / zdmean
+            ! => number of floes encountered by waves travelling meridionally across grid cell:
+            IF( zdmean > 0._wp ) THEN
+               znfloes = stmer(ji,jj) * at_i(ji,jj) / zdmean   ! stmer(ji,jj) = meridional distance across T cells
+            ELSE
+               znfloes = 0._wp
+            ENDIF
+
+            ! Grid cell mean ice thickness:
+            zhi = vt_i(ji,jj) / at_i(ji,jj)
+
+            DO jw = 1, nn_nwfreq
+               !
+               ! Calculate the (natural) logarithm of the attenuation coefficient for
+               ! this period (= 1/frequency) using the quadratic approx. given in HT15:
+               !
+               zloga = zc0 + zch  * zhi             + zct  / wfreq(jw)      &
+                  &        + zch2 * zhi**2          + zct2 / wfreq(jw)**2   &
+                  &        + zcht * zhi / wfreq(jw)
+               !
+               ! Save the exponent of the damping factor:
+               zattxp(jw) = znfloes * EXP(zloga)
+               !
+            ENDDO
+
+         ELSEIF( tmask(ji,jj,1) < 1._wp ) THEN
+            zattxp(:) = zf_land    ! set land flag
+         ELSE
+            zattxp(:) = zf_noice   ! set no-ice flag
+         ENDIF
+
+         ! Calculate wave spectrum (*ALL* grid cells), if needed:
+         IF( l_attn_calc_spec ) wspec(ji,jj,:) = wav_spec_bret( hsw(ji,jj), wpf(ji,jj) )
+
+         ! ======================================================== !
+         ! 2  Transfer data into global domain, global scope arrays !
+         ! ======================================================== !
+         ji_glo = mig(ji,nn_hls)  ! computational domain indices
+         jj_glo = mjg(jj,nn_hls)  ! ---> global domain indices
+
+         ! Fill necessary global arrays:
+         wspec_glo(ji_glo,jj_glo,:) = wspec (ji,jj,:)
+         watxp_glo(ji_glo,jj_glo,:) = zattxp(:)
+
+      END_2D
+
+      ! Need to wait for all processors to complete the above loop so
+      ! that global arrays are completely filled and available to all:
+      CALL mppsync
+
+      ! Compute logical mask on the global domain identifying ice-covered grid
+      ! cells (T) or not (F), deduced from watxp_glo, for use in loop below:
+      ll_mask_ice(:,:) = ( watxp_glo(:,:,1) > zf_noice )
+
+      ! =========================================== !
+      ! 3  Locate source grid cells for each target !
+      ! =========================================== !
+      DO_2D(0, 0, 0, 0)
+         IF( at_i(ji,jj) > epsi06 ) THEN
+
+            ! Compute logical mask on the global domain that identifies a
+            ! meridian within a tolerance +/- rn_attn_lam_tol:
+            ll_mask_mer(:,:) =       (glamt_glo(:,:) >= (glamt(ji,jj) - rn_attn_lam_tol))   &
+               &               .AND. (glamt_glo(:,:) <= (glamt(ji,jj) + rn_attn_lam_tol))
+
+            ! Locate the source grid cell (nearest open-ocean grid cell).
+            ! This is the most poleward latitude along the meridian defined by
+            ! mask l_mask_mer that is not ice covered, is more equatorward than
+            ! the target grid cell latitude, has wave data, and is not land.
+            !
+            ! Compute logical mask on the global domain that identifies points
+            ! equatorward of the target grid cell (depends on hemisphere):
+            IF( gphit(ji,jj) > 0._wp ) THEN
+               !
+               ! == Target grid cell is in the northern hemisphere == !
+               !
+               ll_mask_eqt(:,:) = gphit_glo(:,:) < gphit(ji,jj)
+               !
+               ! Identify (global array) indices of the source grid cell:
+               isource = MAXLOC( gphit_glo(:,:),   &
+                  &              MASK=ll_mask_mer .AND. (.NOT. ll_mask_ice) .AND. ll_mask_eqt)
+               !
+            ELSE
+               !
+               ! == Target grid cell is in the southern hemisphere == !
+               !
+               ll_mask_eqt(:,:) = gphit_glo(:,:) > gphit(ji,jj)
+               !
+               ! Identify (global array) indices of the source grid cell:
+               isource = MINLOC( gphit_glo(:,:),   &
+                  &              MASK=ll_mask_mer .AND. (.NOT. ll_mask_ice) .AND. ll_mask_eqt)
+               !
+            ENDIF
+
+            IF( (SUM(isource) > 1) .AND. (watxp_glo(isource(1),isource(2),1) > zf_land) ) THEN
+               !
+               ! Found source grid cell: compute net attenuation exponent at the target
+               ! grid cell. Need additional mask for grid cells poleward of source:
+               IF( gphit(ji,jj) > 0._wp ) THEN
+                  ll_mask_pol(:,:) = (gphit_glo(:,:) >= gphit_glo(isource(1),isource(2)))
+               ELSE
+                  ll_mask_pol(:,:) = (gphit_glo(:,:) <= gphit_glo(isource(1),isource(2)))
+               ENDIF
+               !
+               ! Final mask (all conditions) of grid cells to integrate attenuation:
+               ll_mask_tot(:,:) =       ll_mask_mer(:,:) .AND. ll_mask_ice(:,:)   &
+                  &               .AND. ll_mask_eqt(:,:) .AND. ll_mask_pol(:,:)
+               !
+               DO jw = 1, nn_nwfreq
+                  ! Total attenuation exponent for this frequency:
+                  zattxp_tot = SUM(watxp_glo(:,:,jw), MASK=ll_mask_tot)
+                  !
+                  ! Attenuated wave spectrum at target grid cell:
+                  wspec(ji,jj,jw) = wspec_glo(isource(1),isource(2),jw) * EXP(-zattxp_tot)
+               ENDDO
+               !
+               ! =========================================================== !
+               ! 4  Calculate attenuated wave properties at target grid cell !
+               ! =========================================================== !
+               !
+               CALL ice_wav_calc( wspec(ji,jj,:), hsw(ji,jj), wpf(ji,jj), wmp(ji,jj) )
+               !
+            ENDIF
+            !
+         ENDIF
+      END_2D
+
+      CALL lbc_lnk('ice_wav_attn', hsw(:,:)    , 'T', 1._wp, wpf(:,:), 'T', 1._wp, wmp(:,:), 'T', 1._wp)
+      CALL lbc_lnk('ice_wav_attn', wspec(:,:,:), 'T', 1._wp)
+
+      IF( ln_timing )   CALL timing_stop('ice_wav_attn')
+
    END SUBROUTINE ice_wav_attn
 
 
-   SUBROUTINE ice_wav_calc
+   SUBROUTINE ice_wav_calc( pwspec, phsw, pwpf, pwmp )
       !!-------------------------------------------------------------------
       !!                 *** ROUTINE ice_wav_calc ***
       !!-------------------------------------------------------------------
       !!
-      !! ** Purpose :   Calculate wave properties under sea ice from wave spectrum
+      !! ** Purpose :   Calculate wave properties from the wave spectrum
       !!
-      !! ** Method  :   Significant wave height, Hs, is given by (e.g., Holthuijsen 2007):
+      !! ** Method  :   Significant wave height, Hs, is given by:
       !!
       !!                   Hs = 4 * sqrt{ int[ E(f)df ] }
       !!
@@ -210,20 +458,57 @@ CONTAINS
       !!
       !!                   E(fp) = max[ E(f) ]
       !!
-      !! ** Callers :   ice_wav_attn --> [ice_wav_calc]
+      !!                The wave mean period is given by the ratio of zeroth to the
+      !!                first moments of the wave spectrum:
       !!
-      !! ** Note    :   This routine is only called when ln_ice_wav_attn=T.
-      !!                It updates the global hsw and wpf arrays but only for
-      !!                grid cells containing sea ice.
+      !!                   Tm = int[ E(f)df ] / int[ fE(f)df ]
+      !!
+      !!                See, e.g., WMO (2018).
+      !!
+      !! ** Inputs  :   pwspec : wave energy spectrum at one location,
+      !!                         as a function of frequency (m2.Hz-1)
+      !!
+      !! ** Outputs :   phsw   : significant wave height (m)
+      !!                pwpf   : wave peak frequency (Hz)
+      !!                pwmp   : wave mean period (s)
+      !!
+      !! ** Callers :   ice_wav_attn --> [ice_wav_calc]
       !!
       !! ** References
       !!    ----------
-      !!    Holthuijsen, L. H. (2007)
-      !!              Waves in Oceanic and Coastal Waters.
-      !!              Cambridge University Press, p70, ISBN 978-0-521-86028-4.
+      !!    World Meteorological Organization (WMO), 2018.
+      !!              Guide to Wave Analysis and Forecasting.
+      !!              2018 ed., Geneva, Switzerland.
+      !!
       !!-------------------------------------------------------------------
       !
+      REAL(wp), DIMENSION(nn_nwfreq), INTENT(in)    ::   pwspec   ! wave energy spectrum (m2.Hz-1)
+      REAL(wp),                       INTENT(inout) ::   phsw     ! significant wave height (m)
+      REAL(wp),                       INTENT(inout) ::   pwpf     ! wave peak frequency (Hz)
+      REAL(wp),                       INTENT(inout) ::   pwmp     ! wave mean period (s)
+      !
+      REAL(wp) ::   zm0     ! zeroth-moment of the wave spectrum (m2)
+      REAL(wp) ::   zm1     ! first-moment of the wave spectrum (m2.s-1)
+      !
       !!-------------------------------------------------------------------
+
+      ! Moments of the wave spectrum:
+      zm0 = SUM(            pwspec(:) * wdfreq(:) )
+      zm1 = SUM( wfreq(:) * pwspec(:) * wdfreq(:) )
+
+      ! Significant wave height:
+      phsw = 4._wp * SQRT( zm0 )
+
+      ! Wave peak frequency:
+      pwpf = wfreq(MAXLOC(pwspec(:), DIM=1))
+
+      ! Wave mean period:
+      IF( zm1 > 0._wp ) THEN
+         pwmp = zm0 / zm1
+      ELSE
+         pwmp = 0._wp
+      ENDIF
+
    END SUBROUTINE ice_wav_calc
 
 
@@ -788,6 +1073,89 @@ CONTAINS
    END FUNCTION wav_spec_bret
 
 
+   SUBROUTINE wav_calc_stmer
+      !!-------------------------------------------------------------------
+      !!                 *** ROUTINE wav_calc_stmer ***
+      !!
+      !! ** Purpose :   Calculate meridional distances across T cells
+      !!
+      !! ** Method  :   This calculation needs the sine and cosine of the angle between
+      !!                meridians and the j-direction on the T-grid. There is already a
+      !!                routine called 'angle' in module geo2ocean.F90 which does this
+      !!                and related calculations, but it is not guaranteed to be called
+      !!                in all configurations. So the first step of this routine is to
+      !!                copy the calculations for the variables gsint and gcost from
+      !!                the 'angle' routine. These are then used to compute meridional
+      !!                distances across T cells, saving values into the module variable
+      !!                stmer which is required by the wave attenuation scheme
+      !!                (subroutine ice_wav_attn).
+      !!
+      !!-------------------------------------------------------------------
+      !
+      REAL(wp) ::   zxnpt, zynpt, znnpt   ! x,y components and norm of the vector: T point to North Pole
+      REAL(wp) ::   zxvvt, zyvvt, znvvt   ! x,y components and norm of the vector: between V points below and above a T point
+      REAL(wp) ::   zsint, zcost          ! sine and cosine of grid angle at T points
+      REAL(wp) ::   zcoststar             ! cosine of T grid angle at which opposite corners (F points) are aligned along a meridian
+      INTEGER  ::   ierr                  ! allocate status return value
+      INTEGER  ::   ji, jj                ! dummy loop indices
+      !
+      !!-------------------------------------------------------------------
+
+      ALLOCATE( stmer(jpi,jpj), STAT=ierr )
+      IF( ierr /= 0 )   CALL ctl_stop( 'wav_calc_stmer: unable to allocate stmer' )
+
+      stmer(:,:) = 0._wp
+
+      DO_2D(0, 1, 0, 1)
+         !
+         ! Calculate cosine/sine of angle between the northward and grid j-direction at
+         ! T points; see subroutine 'angle' of geo2ocean.F90, where this is taken from:
+         !
+         IF( MOD( ABS( glamv(ji,jj) - glamv(ji,jj-1) ), 360._wp) < 1.e-8_wp ) THEN
+            zsint = 0._wp
+            zcost = 1._wp
+         ELSE
+            zxnpt = 0._wp - 2._wp * COS( rad * glamt(ji,jj) ) * TAN( rpi / 4._wp - rad * gphit(ji,jj) / 2._wp )
+            zynpt = 0._wp - 2._wp * SIN( rad * glamt(ji,jj) ) * TAN( rpi / 4._wp - rad * gphit(ji,jj) / 2._wp )
+            !
+            znnpt = zxnpt * zxnpt + zynpt * zynpt
+            !
+            zxvvt =  2._wp * COS( rad * glamv(ji,jj)   ) * TAN( rpi / 4._wp - rad * gphiv(ji,jj)   / 2._wp )   &
+               &  -  2._wp * COS( rad * glamv(ji,jj-1) ) * TAN( rpi / 4._wp - rad * gphiv(ji,jj-1) / 2._wp )
+            !
+            zyvvt =  2._wp * SIN( rad * glamv(ji,jj)   ) * TAN( rpi / 4._wp - rad * gphiv(ji,jj)   / 2._wp )   &
+               &  -  2._wp * SIN( rad * glamv(ji,jj-1) ) * TAN( rpi / 4._wp - rad * gphiv(ji,jj-1) / 2._wp )
+            !
+            znvvt = MAX( SQRT( znnpt * ( zxvvt * zxvvt + zyvvt * zyvvt ) ), 1.e-14_wp )
+            !
+            zsint = ( zxnpt * zyvvt - zynpt * zxvvt ) / znvvt
+            zcost = ( zxnpt * zxvvt + zynpt * zyvvt ) / znvvt
+            !
+         ENDIF
+         !
+         ! Cosine of angle defining aspect ratio of grid cell: this is the value of zcost when
+         ! the T grid cell opposite corners (F points) pass through the same meridian. This
+         ! determines which component, e1t (i-direction) or e2t (j-direction) is used to work
+         ! out the meridional distance along the T grid cell:
+         !
+         zcoststar = e2t(ji,jj) / SQRT( e1t(ji,jj)**2 + e2t(ji,jj)**2 )
+         !
+         ! Note: for ORCA configuration zcost > 0 always, but the below
+         ! ----- accounts for all possible grid cell orientations
+         !
+         IF( ABS(zcost) >= zcoststar ) THEN
+            stmer(ji,jj) = ABS( e2t(ji,jj) / zcost )
+         ELSE
+            stmer(ji,jj) = ABS( e1t(ji,jj) / zsint )
+         ENDIF
+         !
+      END_2D
+
+     CALL lbc_lnk( 'wav_calc_stmer', stmer, 'T', 1._wp )
+
+   END SUBROUTINE wav_calc_stmer
+
+
    SUBROUTINE ice_wav_init
       !!-------------------------------------------------------------------
       !!                 ***  ROUTINE ice_wav_init  ***
@@ -808,13 +1176,14 @@ CONTAINS
       !!
       !!-------------------------------------------------------------------
       !
-      INTEGER ::   ji            ! Dummy loop index
-      INTEGER ::   ierr          ! Local integer output status for allocate
-      INTEGER ::   ios, ioptio   ! Local integer output status for namelist read
+      INTEGER ::   ji, jj, ji_glo, jj_glo   ! Dummy loop indices
+      INTEGER ::   ierr                     ! Local integer output status for allocate
+      INTEGER ::   ios, ioptio              ! Local integer output status for namelist read
       !
       !!
       NAMELIST/namwav/ ln_ice_wav     , ln_ice_wav_attn, ln_ice_wav_spec, ln_ice_wav_rand,   &
-         &             nn_ice_wav_nx1d, rn_ice_wav_dx1d, nn_ice_wav_rmin, rn_ice_wav_ecri
+         &             nn_ice_wav_nx1d, rn_ice_wav_dx1d, nn_ice_wav_rmin, rn_ice_wav_ecri,   &
+         &             rn_attn_lam_tol
       !!-------------------------------------------------------------------
       !
       READ_NML_REF(numnam_ice, namwav)
@@ -828,6 +1197,7 @@ CONTAINS
          WRITE(numout,*) '   Namelist namwav:'
          WRITE(numout,*) '      Wave-ice interactions active or not                        ln_ice_wav = ', ln_ice_wav
          WRITE(numout,*) '         Activate wave-in-ice attenuation scheme or not     ln_ice_wav_attn = ', ln_ice_wav_attn
+         WRITE(numout,*) '            Longitude tolerance for meridians (deg E)       rn_attn_lam_tol = ', rn_attn_lam_tol
          WRITE(numout,*) '         Read full wave energy spectrum or not              ln_ice_wav_spec = ', ln_ice_wav_spec
          WRITE(numout,*) '         Use random phases for wave breakup or not          ln_ice_wav_rand = ', ln_ice_wav_rand
          WRITE(numout,*) '         Size of 1D subdomain for wave breakup              nn_ice_wav_nx1d = ', nn_ice_wav_nx1d
@@ -868,6 +1238,30 @@ CONTAINS
             x1d(ji) = x1d(ji-1) + rn_ice_wav_dx1d
          ENDDO
 
+         ! If using wave attenuation scheme, allocate/prepare the global coordinate arrays.
+         ! The other global arrays needed by that, wspec_glo and watxp_glo, cannot be
+         ! allocated here because we need to know nn_nwfreq, and this is not defined until
+         ! sbc_wave_init, which occurs after this routine. Instead, it is done at the first
+         ! time step in routine ice_wav_attn.
+         !
+         IF( ln_ice_wav_attn ) THEN
+            !
+            ALLOCATE( glamt_glo(jpiglo,jpjglo) , gphit_glo(jpiglo,jpjglo) , STAT=ierr )
+            !
+            IF( ierr /= 0 ) CALL ctl_stop('ice_wav_init: could not allocate global domain coordinates')
+
+            ! Calculate global arrays of longitude/latitude:
+            DO_2D(0, 0, 0, 0)
+               ji_glo = mig(ji,nn_hls)   ! local --> global index
+               jj_glo = mjg(jj,nn_hls)   ! local --> global index
+               glamt_glo(ji_glo,jj_glo) = glamt(ji,jj)
+               gphit_glo(ji_glo,jj_glo) = gphit(ji,jj)
+            END_2D
+            !
+            CALL wav_calc_stmer   ! calculate meridional distances across T cells (variable stmer)
+            !
+         ENDIF
+
          ! Constant flag for subroutine ice_wav_frac: conditions under which it needs to
          ! compute local wave spectrum (T), otherwise it is already available in wspec (F):
          !
@@ -880,6 +1274,16 @@ CONTAINS
          !
          l_frac_calc_spec =      ( (.NOT. ln_ice_wav_spec) .AND. (.NOT. ln_ice_wav_attn) )   &
             &               .OR. ( ln_ice_wav_spec )
+
+         ! Similar for routine ice_wav_attn (attenuation scheme): it will need to compute the wave
+         ! spectrum everywhere (regardless of ice presence) only if the wave spectrum is NOT read in:
+         l_attn_calc_spec = .NOT. ln_ice_wav_spec
+
+         IF(lwp) THEN
+            WRITE(numout,*) ''
+            WRITE(numout,*) '   Namelist options ==> wave fracture    scheme will calculate spectrum = ', l_frac_calc_spec
+            WRITE(numout,*) '                    ==> wave attenuation scheme will calculate spectrum = ', l_attn_calc_spec
+         ENDIF
 
       ENDIF
 
