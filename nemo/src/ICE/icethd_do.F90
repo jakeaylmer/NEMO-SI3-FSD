@@ -342,7 +342,7 @@ CONTAINS
             ! recover the correct value using za_b (a_i_2d at beginning of ice_thd_do)
             ! and zda_latgro (FSD lateral area growth per thickness category):
             !
-            IF (ln_fsd ) THEN
+            IF( ln_fsd ) THEN
                !
                ! Floe size category that new ice is added to, jcat_fsd, can be modified by
                ! ocean waves if ln_ice_wav=T, else it is set in FSD module (nf_newice):
@@ -367,16 +367,18 @@ CONTAINS
             !     prior to adding FSD.
             !
             DO jl = 1, jpl
-              IF( za_b(jl) > 0._wp ) THEN
-                  ! Total new ice volume added laterally (from FSD) and from new ice (if jl = jcat):
-                  zv_newice_total = zv_latgro_cat(jl)
-                  IF(jl == jcat) zv_newice_total = zv_newice_total + zv_newice
-                  !
-                  e_i_2d  (ii,:,jl) = ( ze_newice     * zv_newice_total + e_i_2d  (ii,:,jl) * zv_b(jl) ) / MAX( v_i_2d(ii,jl), epsi20 )
-                  szv_i_2d(ii,:,jl) = ( zs_newice(ii) * zv_newice_total + szv_i_2d(ii,:,jl) * zv_b(jl) ) / MAX( v_i_2d(ii,jl), epsi20 )
-               ELSE
-                  e_i_2d  (ii,:,jl) = ze_newice
-                  szv_i_2d(ii,:,jl) = zs_newice(ii)
+               ! Total new ice volume added laterally (from FSD) and from new ice (if jl == jcat):
+               zv_newice_total = zv_latgro_cat(jl)
+               IF( jl == jcat ) zv_newice_total = zv_newice_total + zv_newice
+               !
+               IF( zv_newice_total > 0._wp ) THEN
+                  IF( za_b(jl) > 0._wp ) THEN
+                     e_i_2d  (ii,:,jl) = ( ze_newice     * zv_newice_total + e_i_2d  (ii,:,jl) * zv_b(jl) ) / MAX( v_i_2d(ii,jl), epsi20 )
+                     szv_i_2d(ii,:,jl) = ( zs_newice(ii) * zv_newice_total + szv_i_2d(ii,:,jl) * zv_b(jl) ) / MAX( v_i_2d(ii,jl), epsi20 )
+                  ELSE
+                     e_i_2d  (ii,:,jl) = ze_newice
+                     szv_i_2d(ii,:,jl) = zs_newice(ii)
+                  ENDIF
                ENDIF
             ENDDO
 
