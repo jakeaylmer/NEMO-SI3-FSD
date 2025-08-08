@@ -33,11 +33,33 @@ MODULE icewav
 
    USE in_out_manager    ! I/O manager (needed for lwm and lwp logicals)
    USE iom               ! I/O manager library (needed for iom_put)
-   USE lib_mpp           ! MPP library (needed for read_nml_substitute.h90 and mppsync)
+   USE lib_mpp           ! MPP library (needed for read_nml_substitute.h90 and mpi_comm_oce)
    USE lbclnk            ! lateral boundary conditions (or mpp links)
    USE timing            ! Timing
 
    IMPLICIT NONE
+   PRIVATE
+
+   INTERFACE wav_merge_glo
+      !!----------------------------------------------------------------------
+      !!                  ***  INTERFACE wav_merge_glo  ***
+      !!----------------------------------------------------------------------
+      !! ** Purpose :   Merge global-domain arrays from all processors for wave attenuation scheme
+      !!
+      !! ** Method  :   Call mpp_sum for general input array where each processor has computed the
+      !!                corresponding sub-domain portion of its copy of the global domain array,
+      !!                with all other values being zero. Since all the latter values are calculated
+      !!                on the other processors, summing the arrays from all processors and
+      !!                distributing the result back to all processors (i.e., MPI_ALLREDUCE with
+      !!                MPI_SUM operation, which is eventually called through this interface) gives
+      !!                each processor the correct, completely filled global domain.
+      !!
+      !!                NOTE: therefore, all sub-domain calculations (in each processor) of global
+      !!                arrays must NOT include halo cells in loop otherwise they are duplicated!
+      !!----------------------------------------------------------------------
+      MODULE PROCEDURE wav_merge_glo_2d
+      MODULE PROCEDURE wav_merge_glo_3d
+   END INTERFACE
 
    PUBLIC ::   ice_wav_newice   ! routine called by ice_thd_do
    PUBLIC ::   ice_wav_attn     ! routine called by ice_stp
@@ -54,8 +76,6 @@ MODULE icewav
    ! Global-domain arrays needed for attenuation (ice_wav_attn) -- which also must be 'global' in module scope:
    REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:)   ::   glamt_glo   ! T-grid longitude (degrees east)
    REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:)   ::   gphit_glo   ! T-grid latitude (degrees north)
-   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:) ::   wspec_glo   ! wave energy spectrum (Hz)
-   REAL(wp), ALLOCATABLE, SAVE, DIMENSION(:,:,:) ::   watxp_glo   ! attenuation factor exponents
 
    !                                     !!* namelist (namwav) *
    LOGICAL         ::   ln_ice_wav_rand   !: Use random phases for sea surface height in wave fracture calculation
@@ -73,6 +93,67 @@ MODULE icewav
 #  include "read_nml_substitute.h90"
 
 CONTAINS
+
+   SUBROUTINE wav_merge_glo_2d( paglo )
+      !!----------------------------------------------------------------------
+      !!                    ***  ROUTINE wav_merge_glo_2d ***
+      !!----------------------------------------------------------------------
+      !! ** Purpose :   Merge 2D global domain array from all processors.
+      !! ** Method  :   Call mpp_sum for general input 2D array.
+      !!----------------------------------------------------------------------
+      REAL(wp), DIMENSION(:,:), INTENT(inout)   ::  paglo   ! input global domain array
+      REAL(wp), DIMENSION(:)  , ALLOCATABLE     ::  zwork   ! flattened array for mpp
+      INTEGER                                   ::  isize   ! number of values in paglo
+      INTEGER                                   ::  ierr    ! allocate status return value
+      !!----------------------------------------------------------------------
+#if ! defined key_mpi_off
+
+      isize = SIZE(paglo)
+
+      ALLOCATE( zwork(isize), STAT=ierr )
+      IF( ierr /= 0 )   CALL ctl_stop( 'wav_merge_glo_2d: unable to allocate array' )
+
+      zwork(:) = RESHAPE( paglo(:,:), (/ isize /) )
+
+      CALL mpp_sum( 'icewav', zwork, mpi_comm_oce )
+
+      paglo(:,:) = RESHAPE( zwork, SHAPE(paglo) )
+
+      IF( ALLOCATED(zwork) )   DEALLOCATE( zwork )   ! necessary?
+
+#endif
+   END SUBROUTINE wav_merge_glo_2d
+
+
+   SUBROUTINE wav_merge_glo_3d( paglo )
+      !!----------------------------------------------------------------------
+      !!                    ***  ROUTINE wav_merge_glo_3d ***
+      !!----------------------------------------------------------------------
+      !! ** Purpose :   Merge 3D global domain array from all processors.
+      !! ** Method  :   Call mpp_sum for general input 3D array.
+      !!----------------------------------------------------------------------
+      REAL(wp), DIMENSION(:,:,:), INTENT(inout)   ::  paglo   ! input global domain array
+      REAL(wp), DIMENSION(:)    , ALLOCATABLE     ::  zwork   ! flattened array for mpp
+      INTEGER                                     ::  isize   ! number of values in paglo
+      INTEGER                                     ::  ierr    ! allocate status return value
+      !!----------------------------------------------------------------------
+#if ! defined key_mpi_off
+
+      isize = SIZE(paglo)
+
+      ALLOCATE( zwork(isize), STAT=ierr )
+      IF( ierr /= 0 )   CALL ctl_stop( 'wav_merge_glo_3d: unable to allocate array' )
+
+      zwork(:) = RESHAPE( paglo(:,:,:), (/ isize /) )
+
+      CALL mpp_sum( 'icewav', zwork, mpi_comm_oce )
+
+      paglo(:,:,:) = RESHAPE( zwork, SHAPE(paglo) )
+
+      IF( ALLOCATED(zwork) )   DEALLOCATE( zwork )   ! necessary?
+
+#endif
+   END SUBROUTINE wav_merge_glo_3d
 
 
    SUBROUTINE ice_wav_newice( phsw, pwpf, kcat )
@@ -252,7 +333,10 @@ CONTAINS
       REAL(wp)                           ::   znfloes       ! number of floes
       REAL(wp)                           ::   zhi           ! mean ice thickness (m)
       REAL(wp)                           ::   zloga         ! natural logarithm of attenuation coefficient
-      REAL(wp)                           ::   zattxp_tot    ! total damping exponent
+      REAL(wp)                           ::   zattxp_tot    ! total damping exponent along trajectory
+      !
+      REAL(wp), DIMENSION(jpiglo,jpjglo,nn_nwfreq) ::   zwspec_glo   ! GLOBAL DOMAIN ARRAY: wave spectrum
+      REAL(wp), DIMENSION(jpiglo,jpjglo,nn_nwfreq) ::   zattxp_glo   ! GLOBAL DOMAIN ARRAY: local damping exponents (all grid cells)
       !
       LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_ice   ! GLOBAL DOMAIN ARRAY: ice-present  mask
       LOGICAL , DIMENSION(jpiglo,jpjglo) ::   ll_mask_mer   ! GLOBAL DOMAIN ARRAY: meridional   mask
@@ -279,15 +363,8 @@ CONTAINS
       ! Control:
       IF( ln_timing )   CALL timing_start('ice_wav_attn')
 
-      IF( kt == nit000 ) THEN   ! at first time-step
-         ! This cannot be done in ice_wav_init due to order of initialisation routines
-         ! (ice_wav_init comes before sbc_wave_init, so nn_nwfreq is not known yet)
-         ALLOCATE( wspec_glo(jpiglo,jpjglo,nn_nwfreq),           &
-            &      watxp_glo(jpiglo,jpjglo,nn_nwfreq), STAT=ierr )
-         !
-         IF( ierr /= 0 ) CALL ctl_stop( 'ice_wav_attn: unable to allocate global wave arrays' )
-         !
-      ENDIF
+      zwspec_glo(:,:,:) = 0._wp
+      zattxp_glo(:,:,:) = 0._wp
 
       ! =================================================== !
       ! 1  Calculate attenuation exponents -- all ice cells !
@@ -348,18 +425,17 @@ CONTAINS
          jj_glo = mjg(jj,nn_hls)  ! ---> global domain indices
 
          ! Fill necessary global arrays:
-         wspec_glo(ji_glo,jj_glo,:) = wspec (ji,jj,:)
-         watxp_glo(ji_glo,jj_glo,:) = zattxp(:)
+         zwspec_glo(ji_glo,jj_glo,:) = wspec (ji,jj,:)
+         zattxp_glo(ji_glo,jj_glo,:) = zattxp(:)
 
       END_2D
 
-      ! Need to wait for all processors to complete the above loop so
-      ! that global arrays are completely filled and available to all:
-      CALL mppsync
+      CALL wav_merge_glo( zwspec_glo )   ! merge global arrays to/from all processors
+      CALL wav_merge_glo( zattxp_glo )   !
 
       ! Compute logical mask on the global domain identifying ice-covered grid
-      ! cells (T) or not (F), deduced from watxp_glo, for use in loop below:
-      ll_mask_ice(:,:) = ( watxp_glo(:,:,1) > zf_noice )
+      ! cells (T) or not (F), deduced from zattxp_glo, for use in loop below:
+      ll_mask_ice(:,:) = ( zattxp_glo(:,:,1) > zf_noice )
 
       ! =========================================== !
       ! 3  Locate source grid cells for each target !
@@ -401,7 +477,7 @@ CONTAINS
                !
             ENDIF
 
-            IF( (SUM(isource) > 1) .AND. (watxp_glo(isource(1),isource(2),1) > zf_land) ) THEN
+            IF( (SUM(isource) > 1) .AND. (zattxp_glo(isource(1),isource(2),1) > zf_land) ) THEN
                !
                ! Found source grid cell: compute net attenuation exponent at the target
                ! grid cell. Need additional mask for grid cells poleward of source:
@@ -417,10 +493,10 @@ CONTAINS
                !
                DO jw = 1, nn_nwfreq
                   ! Total attenuation exponent for this frequency:
-                  zattxp_tot = SUM(watxp_glo(:,:,jw), MASK=ll_mask_tot)
+                  zattxp_tot = SUM(zattxp_glo(:,:,jw), MASK=ll_mask_tot)
                   !
                   ! Attenuated wave spectrum at target grid cell:
-                  wspec(ji,jj,jw) = wspec_glo(isource(1),isource(2),jw) * EXP(-zattxp_tot)
+                  wspec(ji,jj,jw) = zwspec_glo(isource(1),isource(2),jw) * EXP(-zattxp_tot)
                ENDDO
                !
                ! =========================================================== !
@@ -1239,16 +1315,14 @@ CONTAINS
          ENDDO
 
          ! If using wave attenuation scheme, allocate/prepare the global coordinate arrays.
-         ! The other global arrays needed by that, wspec_glo and watxp_glo, cannot be
-         ! allocated here because we need to know nn_nwfreq, and this is not defined until
-         ! sbc_wave_init, which occurs after this routine. Instead, it is done at the first
-         ! time step in routine ice_wav_attn.
-         !
          IF( ln_ice_wav_attn ) THEN
             !
             ALLOCATE( glamt_glo(jpiglo,jpjglo) , gphit_glo(jpiglo,jpjglo) , STAT=ierr )
             !
             IF( ierr /= 0 ) CALL ctl_stop('ice_wav_init: could not allocate global domain coordinates')
+
+            glamt_glo(:,:) = 0._wp
+            gphit_glo(:,:) = 0._wp
 
             ! Calculate global arrays of longitude/latitude:
             DO_2D(0, 0, 0, 0)
@@ -1258,7 +1332,10 @@ CONTAINS
                gphit_glo(ji_glo,jj_glo) = gphit(ji,jj)
             END_2D
             !
-            CALL wav_calc_stmer   ! calculate meridional distances across T cells (variable stmer)
+            CALL wav_merge_glo( glamt_glo )   ! merge global arrays to/from all processors
+            CALL wav_merge_glo( gphit_glo )   !
+            !
+            CALL wav_calc_stmer               ! calculate meridional distances across T cells (variable stmer)
             !
          ENDIF
 
